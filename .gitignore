@@ -1,0 +1,47 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 环境变量（包含敏感信息）
+.env
+.env.local
+
+# 结果和日志
+results/
+*.log
+wq_brain.log
+
+# 缓存
+.cache/
+.pytest_cache/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 数据文件
+*.csv
+*.json
+*.pkl
+*.h5
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+*.ipynb
