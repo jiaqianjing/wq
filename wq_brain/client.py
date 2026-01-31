@@ -6,6 +6,7 @@ WorldQuant Brain API 客户端
 import json
 import time
 import requests
+from requests.auth import HTTPBasicAuth
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 from enum import Enum
@@ -93,20 +94,15 @@ class WorldQuantBrainClient:
         Returns:
             bool: 认证是否成功
         """
-        auth_url = f"{self.BASE_URL}/auth/users/authenticate"
+        auth_url = f"{self.BASE_URL}/authentication"
         headers = {
-            "Content-Type": "application/json",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        }
-        payload = {
-            "username": self.username,
-            "password": self.password
         }
 
         try:
             response = self.session.post(
                 auth_url,
-                json=payload,
+                auth=HTTPBasicAuth(self.username, self.password),
                 headers=headers,
                 timeout=30
             )
@@ -150,19 +146,26 @@ class WorldQuantBrainClient:
         Returns:
             SimulateResult: 模拟结果
         """
-        url = f"{self.BASE_URL}/alphas"
+        url = f"{self.BASE_URL}/simulations"
 
         payload = {
-            "expression": config.expression,
-            "region": config.region.value,
-            "universe": config.universe.value,
-            "delay": config.delay.value,
-            "decay": config.decay,
-            "neutralization": config.neutralization,
-            "truncation": config.truncation,
-            "pasteurization": config.pasteurization,
-            "unitNeutral": config.unit_neutral,
-            "visualization": config.visualization
+            "type": "REGULAR",
+            "settings": {
+                "instrumentType": "EQUITY",
+                "region": config.region.value,
+                "universe": config.universe.value,
+                "delay": config.delay.value,
+                "decay": config.decay,
+                "neutralization": config.neutralization,
+                "truncation": config.truncation,
+                "pasteurization": config.pasteurization,
+                "testPeriod": "P0Y",
+                "unitHandling": "VERIFY",
+                "nanHandling": "ON",
+                "language": "FASTEXPR",
+                "visualization": config.visualization
+            },
+            "regular": config.expression
         }
 
         try:
@@ -174,14 +177,32 @@ class WorldQuantBrainClient:
             )
 
             if response.status_code == 201:
-                data = response.json()
-                alpha_id = data.get("id")
-                logger.info(f"Alpha 创建成功，ID: {alpha_id}")
-
-                # 等待模拟完成并获取结果
-                return self._wait_for_simulation(alpha_id)
+                # 从 Location header 获取模拟进度 URL
+                progress_url = response.headers.get("Location")
+                if progress_url:
+                    logger.info(f"Alpha 模拟已创建，轮询进度...")
+                    return self._wait_for_simulation_progress(progress_url)
+                else:
+                    error_msg = "未获取到模拟进度 URL"
+                    logger.error(f"模拟失败: {error_msg}")
+                    return SimulateResult(
+                        alpha_id="",
+                        status="FAILED",
+                        sharpe=0,
+                        fitness=0,
+                        turnover=0,
+                        returns=0,
+                        drawdown=0,
+                        margin=0,
+                        is_submittable=False,
+                        error_message=error_msg
+                    )
             else:
-                error_msg = response.json().get("message", "未知错误")
+                try:
+                    error_data = response.json()
+                    error_msg = error_data.get("message", str(error_data))
+                except:
+                    error_msg = response.text or f"HTTP {response.status_code}"
                 logger.error(f"模拟失败: {error_msg}")
                 return SimulateResult(
                     alpha_id="",
@@ -200,6 +221,144 @@ class WorldQuantBrainClient:
             logger.error(f"请求异常: {e}")
             return SimulateResult(
                 alpha_id="",
+                status="ERROR",
+                sharpe=0,
+                fitness=0,
+                turnover=0,
+                returns=0,
+                drawdown=0,
+                margin=0,
+                is_submittable=False,
+                error_message=str(e)
+            )
+
+    def _wait_for_simulation_progress(self, progress_url: str, max_wait: int = 300) -> SimulateResult:
+        """
+        等待模拟完成（通过进度 URL）
+
+        Args:
+            progress_url: 模拟进度 URL（从 Location header 获取）
+            max_wait: 最大等待时间（秒）
+
+        Returns:
+            SimulateResult: 模拟结果
+        """
+        start_time = time.time()
+
+        while time.time() - start_time < max_wait:
+            try:
+                response = self.session.get(
+                    progress_url,
+                    headers=self._get_headers(),
+                    timeout=30
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    
+                    # 检查是否有 retry-after header，如果有说明还在进行中
+                    retry_after = response.headers.get("Retry-After")
+                    if retry_after:
+                        wait_time = float(retry_after)
+                        logger.info(f"模拟进行中... 等待 {wait_time:.1f} 秒")
+                        time.sleep(wait_time)
+                        continue
+                    
+                    # 模拟完成，获取 alpha ID 和结果
+                    alpha_id = data.get("alpha", "")
+                    if alpha_id:
+                        return self._get_alpha_result(alpha_id)
+                    else:
+                        return SimulateResult(
+                            alpha_id="",
+                            status="FAILED",
+                            sharpe=0,
+                            fitness=0,
+                            turnover=0,
+                            returns=0,
+                            drawdown=0,
+                            margin=0,
+                            is_submittable=False,
+                            error_message="未获取到 Alpha ID"
+                        )
+
+                time.sleep(5)
+
+            except Exception as e:
+                logger.warning(f"检查模拟状态出错: {e}")
+                time.sleep(5)
+
+        return SimulateResult(
+            alpha_id="",
+            status="TIMEOUT",
+            sharpe=0,
+            fitness=0,
+            turnover=0,
+            returns=0,
+            drawdown=0,
+            margin=0,
+            is_submittable=False,
+            error_message="模拟超时"
+        )
+
+    def _get_alpha_result(self, alpha_id: str) -> SimulateResult:
+        """
+        获取 Alpha 的模拟结果
+
+        Args:
+            alpha_id: Alpha ID
+
+        Returns:
+            SimulateResult: 模拟结果
+        """
+        url = f"{self.BASE_URL}/alphas/{alpha_id}"
+
+        try:
+            response = self.session.get(
+                url,
+                headers=self._get_headers(),
+                timeout=30
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                logger.debug(f"Alpha 结果数据: {data}")
+                status = data.get("status", "")
+                # metrics 在 'is' 字段中
+                is_data = data.get("is", {})
+                metrics = is_data if is_data else {}
+                
+                return SimulateResult(
+                    alpha_id=alpha_id,
+                    status=status,
+                    sharpe=metrics.get("sharpe", 0),
+                    fitness=metrics.get("fitness", 0),
+                    turnover=metrics.get("turnover", 0),
+                    returns=metrics.get("returns", 0),
+                    drawdown=metrics.get("drawdown", 0),
+                    margin=metrics.get("margin", 0),
+                    is_submittable=data.get("is.submittable", False)
+                )
+            else:
+                error_msg = f"获取 Alpha 结果失败: HTTP {response.status_code}"
+                logger.error(error_msg)
+                return SimulateResult(
+                    alpha_id=alpha_id,
+                    status="ERROR",
+                    sharpe=0,
+                    fitness=0,
+                    turnover=0,
+                    returns=0,
+                    drawdown=0,
+                    margin=0,
+                    is_submittable=False,
+                    error_message=error_msg
+                )
+
+        except Exception as e:
+            logger.error(f"获取 Alpha 结果异常: {e}")
+            return SimulateResult(
+                alpha_id=alpha_id,
                 status="ERROR",
                 sharpe=0,
                 fitness=0,

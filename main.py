@@ -108,7 +108,7 @@ def cmd_simulate(args):
     region = Region(args.region.upper())
     universe = Unviverse.TOP3000
 
-    submitter = AlphaSubmitter(client, auto_submit=False)
+    submitter = AlphaSubmitter(client)
 
     # 模拟所有 Alpha
     for alpha_type, alphas in alphas_by_type.items():
