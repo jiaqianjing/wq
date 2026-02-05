@@ -56,6 +56,18 @@ class SubmissionRecord:
     correlation_passed: bool = True
 
 
+@dataclass
+class AlphaSettings:
+    """Alpha 配置设置（用于策略解耦）"""
+    delay: Delay = Delay.DELAY_1
+    decay: int = 0
+    neutralization: str = "SUBINDUSTRY"
+    truncation: float = 0.08
+    pasteurization: str = "ON"
+    unit_neutral: bool = False
+    visualization: bool = False
+
+
 class AlphaSubmitter:
     """Alpha 提交器"""
 
@@ -75,7 +87,8 @@ class AlphaSubmitter:
                            universe: Unviverse = Unviverse.TOP3000,
                            auto_submit: bool = True,
                            check_correlation: bool = True,
-                           max_correlation: float = 0.7) -> List[SubmissionRecord]:
+                           max_correlation: float = 0.7,
+                           settings: Optional[AlphaSettings] = None) -> List[SubmissionRecord]:
         """
         模拟并提交 Alpha 列表
 
@@ -91,6 +104,7 @@ class AlphaSubmitter:
             List[SubmissionRecord]: 提交记录列表
         """
         records = []
+        settings = settings or AlphaSettings()
 
         for i, alpha in enumerate(alphas, 1):
             logger.info(f"处理 Alpha {i}/{len(alphas)}: {alpha.get('name', 'unknown')}")
@@ -101,11 +115,13 @@ class AlphaSubmitter:
                     expression=alpha["expression"],
                     region=region,
                     universe=universe,
-                    delay=Delay.DELAY_1,
-                    decay=0,
-                    neutralization="SUBINDUSTRY",
-                    truncation=0.08,
-                    pasteurization="ON"
+                    delay=settings.delay,
+                    decay=settings.decay,
+                    neutralization=settings.neutralization,
+                    truncation=settings.truncation,
+                    pasteurization=settings.pasteurization,
+                    unit_neutral=settings.unit_neutral,
+                    visualization=settings.visualization,
                 )
 
                 # 模拟

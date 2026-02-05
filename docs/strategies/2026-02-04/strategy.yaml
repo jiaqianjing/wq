@@ -1,0 +1,23 @@
+name: 2026-02-04-usa-pp-atoms
+date: 2026-02-04
+region: USA
+universe: TOP3000
+delay: 1
+seed: 20260204
+
+types:
+  power_pool: 10
+  atom: 10
+
+diversify: true
+auto_submit: true
+check_correlation: true
+max_correlation: 0.7
+
+# AlphaConfig 设置
+neutralization: SUBINDUSTRY
+truncation: 0.08
+pasteurization: "ON"
+decay: 0
+unit_neutral: false
+visualization: false

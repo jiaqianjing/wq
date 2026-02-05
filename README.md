@@ -31,6 +31,7 @@
 │   ├── client.py          # API 客户端
 │   ├── alpha_generator.py # Alpha 生成器
 │   └── alpha_submitter.py # Alpha 提交器
+├── docs/                  # 量化探索笔记
 ├── main.py                # 主入口脚本
 ├── config.yaml            # 配置文件
 ├── .env.example           # 环境变量示例
@@ -103,6 +104,12 @@ python main.py submit -t power_pool -c 5 --min-sharpe 1.5
 # 提交之前模拟成功但尚未提交的 Alpha
 python main.py pending
 ```
+
+## 文档与笔记
+
+`docs/` 用于记录每次批量生成与模拟的策略配置，以及对应的心得与复盘，方便积累经验并调整下一次生成策略。
+
+入口文档: `docs/README.md`
 
 ## Alpha 类型说明
 

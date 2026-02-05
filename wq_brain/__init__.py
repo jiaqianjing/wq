@@ -14,5 +14,6 @@ __author__ = "Consultant"
 from .client import WorldQuantBrainClient
 from .alpha_generator import AlphaGenerator
 from .alpha_submitter import AlphaSubmitter
+from .strategy import StrategySpec
 
-__all__ = ["WorldQuantBrainClient", "AlphaGenerator", "AlphaSubmitter"]
+__all__ = ["WorldQuantBrainClient", "AlphaGenerator", "AlphaSubmitter", "StrategySpec"]

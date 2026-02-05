@@ -12,6 +12,7 @@ Commands:
   submit    - 模拟并提交符合条件的 Alpha
   pending   - 提交所有待提交的 Alpha
   report    - 生成历史提交报告
+  strategy  - 按策略配置生成/执行
 
 Options:
   --type, -t     - 指定 Alpha 类型: all, atom, regular, power_pool, superalpha
@@ -37,6 +38,7 @@ from dotenv import load_dotenv
 from wq_brain import WorldQuantBrainClient, AlphaGenerator, AlphaSubmitter
 from wq_brain.client import Region, Unviverse
 from wq_brain.alpha_submitter import SubmissionCriteria
+from wq_brain.strategy import load_strategy, build_alphas_by_type, save_templates, run_strategy
 
 logging.basicConfig(
     level=logging.INFO,
@@ -241,6 +243,32 @@ def cmd_generate(args):
         print(f"\n已保存到: {args.output}")
 
 
+def cmd_strategy(args):
+    """按策略配置生成模板并可选执行"""
+    spec = load_strategy(args.spec)
+    generator = AlphaGenerator()
+    alphas_by_type = build_alphas_by_type(spec, generator)
+
+    if args.templates:
+        save_templates(args.templates, spec, alphas_by_type)
+        logger.info(f"策略模板已保存到: {args.templates}")
+
+    if not args.run:
+        logger.info("未执行模拟/提交（使用 --run 启动执行）")
+        return
+
+    username, password = get_auth_credentials()
+    client = create_client(username, password)
+    submitter = AlphaSubmitter(client)
+
+    all_records = run_strategy(spec, alphas_by_type, submitter)
+    if args.report:
+        report = submitter.generate_report(all_records)
+        with open(args.report, "w") as f:
+            f.write(report)
+        logger.info(f"报告已保存到: {args.report}")
+
+
 def main():
     """主函数"""
     # 加载环境变量
@@ -308,6 +336,17 @@ def main():
     generate_parser.add_argument('-o', '--output', type=str,
                                 help='输出文件路径 (.json)')
 
+    # strategy 命令
+    strategy_parser = subparsers.add_parser('strategy', help='按策略配置生成/执行')
+    strategy_parser.add_argument('-f', '--spec', required=True,
+                                help='策略配置 YAML 文件路径')
+    strategy_parser.add_argument('--templates', default='',
+                                help='保存生成的 Alpha 模板 JSON 路径')
+    strategy_parser.add_argument('--run', action='store_true',
+                                help='执行模拟与提交')
+    strategy_parser.add_argument('--report', default='',
+                                help='保存执行报告的路径')
+
     args = parser.parse_args()
 
     if not args.command:
@@ -319,7 +358,8 @@ def main():
         'simulate': cmd_simulate,
         'submit': cmd_submit,
         'pending': cmd_pending,
-        'generate': cmd_generate
+        'generate': cmd_generate,
+        'strategy': cmd_strategy
     }
 
     cmd_func = commands.get(args.command)
