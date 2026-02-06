@@ -99,6 +99,13 @@ class AlphaGenerator:
                 params={"window": [10, 20, 60]},
             ),
             AlphaTemplate(
+                name="bollinger_reversion",
+                expression="-rank((close - ts_mean(close, {window})) / (ts_std(close, {window}) + 0.001))",
+                category="mean_reversion",
+                description="布林带式均值回归（负向偏离）",
+                params={"window": [10, 20, 60]},
+            ),
+            AlphaTemplate(
                 name="volatility_low",
                 expression="-rank(ts_std(ts_returns(close, 1), {window}))",
                 category="volatility",
@@ -127,6 +134,13 @@ class AlphaGenerator:
                 params={},
             ),
             AlphaTemplate(
+                name="vwap_reversion",
+                expression="rank((vwap - close) / (ts_std(close, {window}) + 0.001))",
+                category="mean_reversion",
+                description="VWAP 反转强度（标准化）",
+                params={"window": [10, 20]},
+            ),
+            AlphaTemplate(
                 name="volume_momentum",
                 expression="rank(volume / (adv20 + 0.001)) * rank((close - open) / (close + 0.001))",
                 category="volume",
@@ -148,6 +162,20 @@ class AlphaGenerator:
                 description="日内强度（101 #7 风格）",
                 params={},
             ),
+            AlphaTemplate(
+                name="volume_spike_reversal",
+                expression="-rank(ts_delta(close, {delay})) * rank(volume / (adv20 + 0.001))",
+                category="reversal",
+                description="放量反转（价格变化 × 相对成交量）",
+                params={"delay": [1, 3, 5]},
+            ),
+            AlphaTemplate(
+                name="low_vol_reversion",
+                expression="-rank(ts_returns(close, {delay})) * (1 - rank(ts_std(ts_returns(close, 1), {window})))",
+                category="reversal",
+                description="低波权重反转",
+                params={"delay": [1, 3], "window": [20, 60]},
+            ),
             # 距离高低点（反转/动量）
             AlphaTemplate(
                 name="dist_from_high",
@@ -162,6 +190,13 @@ class AlphaGenerator:
                 category="momentum",
                 description="距近期低点的距离",
                 params={"window": [5, 10, 20]},
+            ),
+            AlphaTemplate(
+                name="value_quality",
+                expression="rank(roe) * rank(-pb)",
+                category="fundamental",
+                description="质量 × 价值（高 ROE & 低 PB）",
+                params={},
             ),
         ]
 

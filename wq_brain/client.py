@@ -78,6 +78,8 @@ class WorldQuantBrainClient:
     """WorldQuant Brain API 客户端"""
 
     BASE_URL = "https://api.worldquantbrain.com"
+    DEFAULT_SIMULATION_MAX_WAIT = 900
+    DEFAULT_SIMULATION_RETRY_WAIT = 600
 
     def __init__(self, username: str, password: str):
         self.username = username
@@ -181,7 +183,16 @@ class WorldQuantBrainClient:
                 progress_url = response.headers.get("Location")
                 if progress_url:
                     logger.info(f"Alpha 模拟已创建，轮询进度...")
-                    return self._wait_for_simulation_progress(progress_url)
+                    result = self._wait_for_simulation_progress(
+                        progress_url, max_wait=self.DEFAULT_SIMULATION_MAX_WAIT
+                    )
+                    if result.status == "TIMEOUT":
+                        logger.warning("模拟超时，准备重试轮询...")
+                        time.sleep(5)
+                        result = self._wait_for_simulation_progress(
+                            progress_url, max_wait=self.DEFAULT_SIMULATION_RETRY_WAIT
+                        )
+                    return result
                 else:
                     error_msg = "未获取到模拟进度 URL"
                     logger.error(f"模拟失败: {error_msg}")
@@ -232,7 +243,7 @@ class WorldQuantBrainClient:
                 error_message=str(e)
             )
 
-    def _wait_for_simulation_progress(self, progress_url: str, max_wait: int = 300) -> SimulateResult:
+    def _wait_for_simulation_progress(self, progress_url: str, max_wait: int = 900) -> SimulateResult:
         """
         等待模拟完成（通过进度 URL）
 
@@ -268,19 +279,34 @@ class WorldQuantBrainClient:
                     alpha_id = data.get("alpha", "")
                     if alpha_id:
                         return self._get_alpha_result(alpha_id)
-                    else:
-                        return SimulateResult(
-                            alpha_id="",
-                            status="FAILED",
-                            sharpe=0,
-                            fitness=0,
-                            turnover=0,
-                            returns=0,
-                            drawdown=0,
-                            margin=0,
-                            is_submittable=False,
-                            error_message="未获取到 Alpha ID"
-                        )
+
+                    status = str(data.get("status", "")).upper()
+                    if status and status not in ["COMPLETE", "PASS", "FAIL"]:
+                        time.sleep(5)
+                        continue
+
+                    progress = data.get("progress")
+                    if isinstance(progress, (int, float)) and progress < 1:
+                        time.sleep(5)
+                        continue
+
+                    ready = data.get("ready")
+                    if ready is False:
+                        time.sleep(5)
+                        continue
+
+                    return SimulateResult(
+                        alpha_id="",
+                        status="FAILED",
+                        sharpe=0,
+                        fitness=0,
+                        turnover=0,
+                        returns=0,
+                        drawdown=0,
+                        margin=0,
+                        is_submittable=False,
+                        error_message="未获取到 Alpha ID"
+                    )
 
                 time.sleep(5)
 
