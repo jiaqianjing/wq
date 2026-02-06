@@ -78,8 +78,8 @@ class WorldQuantBrainClient:
     """WorldQuant Brain API 客户端"""
 
     BASE_URL = "https://api.worldquantbrain.com"
-    DEFAULT_SIMULATION_MAX_WAIT = 900
-    DEFAULT_SIMULATION_RETRY_WAIT = 600
+    DEFAULT_SIMULATION_MAX_WAIT = 120
+    DEFAULT_SIMULATION_RETRY_WAIT = 60
 
     def __init__(self, username: str, password: str):
         self.username = username
@@ -138,6 +138,46 @@ class WorldQuantBrainClient:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
 
+    def _should_retry_auth(self, response: requests.Response) -> bool:
+        if response.status_code in (401, 403):
+            return True
+        try:
+            data = response.json()
+        except Exception:
+            return False
+        detail = str(data.get("detail", "")).lower()
+        message = str(data.get("message", "")).lower()
+        return "incorrect authentication credentials" in detail or "incorrect authentication credentials" in message
+
+    def _request(self, method: str, url: str, **kwargs) -> requests.Response:
+        """统一请求入口，自动处理认证失效重试"""
+        headers = kwargs.pop("headers", None)
+        for _ in range(2):
+            if headers:
+                req_headers = headers.copy()
+                if "Authorization" not in req_headers:
+                    req_headers.update(self._get_headers())
+            else:
+                req_headers = self._get_headers()
+
+            response = self.session.request(
+                method,
+                url,
+                headers=req_headers,
+                **kwargs
+            )
+
+            if not self._should_retry_auth(response):
+                return response
+
+            logger.warning("认证可能失效，尝试重新认证并重试...")
+            self.auth_token = None
+            self.refresh_token = None
+            if not self.authenticate():
+                return response
+
+        return response
+
     def simulate_alpha(self, config: AlphaConfig) -> SimulateResult:
         """
         模拟单个 Alpha
@@ -171,10 +211,10 @@ class WorldQuantBrainClient:
         }
 
         try:
-            response = self.session.post(
+            response = self._request(
+                "post",
                 url,
                 json=payload,
-                headers=self._get_headers(),
                 timeout=60
             )
 
@@ -258,9 +298,9 @@ class WorldQuantBrainClient:
 
         while time.time() - start_time < max_wait:
             try:
-                response = self.session.get(
+                response = self._request(
+                    "get",
                     progress_url,
-                    headers=self._get_headers(),
                     timeout=30
                 )
 
@@ -340,9 +380,9 @@ class WorldQuantBrainClient:
         url = f"{self.BASE_URL}/alphas/{alpha_id}"
 
         try:
-            response = self.session.get(
+            response = self._request(
+                "get",
                 url,
-                headers=self._get_headers(),
                 timeout=30
             )
 
@@ -412,9 +452,9 @@ class WorldQuantBrainClient:
 
         while time.time() - start_time < max_wait:
             try:
-                response = self.session.get(
+                response = self._request(
+                    "get",
                     url,
-                    headers=self._get_headers(),
                     timeout=30
                 )
 
@@ -470,9 +510,9 @@ class WorldQuantBrainClient:
         url = f"{self.BASE_URL}/alphas/{alpha_id}/submit"
 
         try:
-            response = self.session.post(
+            response = self._request(
+                "post",
                 url,
-                headers=self._get_headers(),
                 timeout=30
             )
 
@@ -503,10 +543,10 @@ class WorldQuantBrainClient:
         }
 
         try:
-            response = self.session.get(
+            response = self._request(
+                "get",
                 url,
                 params=params,
-                headers=self._get_headers(),
                 timeout=30
             )
 
@@ -531,9 +571,9 @@ class WorldQuantBrainClient:
         url = f"{self.BASE_URL}/alphas/{alpha_id}/correlations"
 
         try:
-            response = self.session.get(
+            response = self._request(
+                "get",
                 url,
-                headers=self._get_headers(),
                 timeout=30
             )
 
@@ -559,10 +599,10 @@ class WorldQuantBrainClient:
         params = {"dataset.id": dataset} if dataset else {}
 
         try:
-            response = self.session.get(
+            response = self._request(
+                "get",
                 url,
                 params=params,
-                headers=self._get_headers(),
                 timeout=30
             )
 

@@ -6,7 +6,7 @@ delay: 1
 seed: 20260206
 
 types:
-  power_pool: 50
+  power_pool: 10
 
 diversify: true
 auto_submit: true
