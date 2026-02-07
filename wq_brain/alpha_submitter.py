@@ -18,6 +18,13 @@ import os
 
 from .client import WorldQuantBrainClient, AlphaConfig, SimulateResult, Region, Unviverse, Delay
 
+try:
+    from .learning import AlphaDatabase, AlphaRecord
+    LEARNING_ENABLED = True
+except ImportError:
+    LEARNING_ENABLED = False
+    logger.warning("学习模块未启用")
+
 logger = logging.getLogger(__name__)
 
 
@@ -73,7 +80,8 @@ class AlphaSubmitter:
 
     def __init__(self, client: WorldQuantBrainClient,
                  criteria: Optional[SubmissionCriteria] = None,
-                 results_dir: str = "./results"):
+                 results_dir: str = "./results",
+                 enable_learning: bool = True):
         self.client = client
         self.criteria = criteria or SubmissionCriteria()
         self.results_dir = results_dir
@@ -81,6 +89,14 @@ class AlphaSubmitter:
 
         # 确保结果目录存在
         os.makedirs(results_dir, exist_ok=True)
+
+        # 初始化学习系统
+        self.learning_enabled = enable_learning and LEARNING_ENABLED
+        if self.learning_enabled:
+            self.db = AlphaDatabase(f"{results_dir}/alpha_history.db")
+            logger.info("学习系统已启用")
+        else:
+            self.db = None
 
     def simulate_and_submit(self, alphas: List[Dict],
                            region: Region = Region.USA,
@@ -168,6 +184,10 @@ class AlphaSubmitter:
                               f"(Sharpe: {result.sharpe:.3f}, Fitness: {result.fitness:.3f})")
 
                 records.append(record)
+
+                # 保存到学习系统
+                if self.learning_enabled and result.alpha_id:
+                    self._save_to_learning_db(alpha, result, region, universe, settings, record.submitted)
 
                 # 保存进度
                 self._save_progress(records)
@@ -281,6 +301,38 @@ class AlphaSubmitter:
             json.dump(data, f, indent=2)
 
         logger.debug(f"进度已保存到: {filename}")
+
+    def _save_to_learning_db(self, alpha: Dict, result: SimulateResult,
+                            region: Region, universe: Unviverse,
+                            settings: AlphaSettings, submitted: bool):
+        """保存结果到学习数据库"""
+        if not self.db:
+            return
+
+        try:
+            record = AlphaRecord(
+                expression=alpha["expression"],
+                template_name=alpha.get("name", "unknown"),
+                category=alpha.get("category", "unknown"),
+                alpha_type=alpha.get("type", "unknown"),
+                params=alpha.get("params", {}),
+                sharpe=result.sharpe,
+                fitness=result.fitness,
+                turnover=result.turnover,
+                drawdown=result.drawdown,
+                returns=result.returns,
+                timestamp=datetime.now().isoformat(),
+                alpha_id=result.alpha_id,
+                status=result.status,
+                submitted=submitted,
+                region=region.value,
+                universe=universe.value,
+                delay=settings.delay.value
+            )
+            self.db.save_record(record)
+            logger.debug(f"已保存到学习数据库: {result.alpha_id}")
+        except Exception as e:
+            logger.warning(f"保存到学习数据库失败: {e}")
 
     def generate_report(self, records: List[SubmissionRecord]) -> str:
         """
