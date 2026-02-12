@@ -142,6 +142,7 @@ class AlphaSubmitter:
 
                 # 模拟
                 result = self.client.simulate_alpha(config)
+                alpha_label = result.alpha_id or alpha.get("name", "unknown")
 
                 record = SubmissionRecord(
                     alpha_id=result.alpha_id,
@@ -154,7 +155,7 @@ class AlphaSubmitter:
 
                 # 检查是否符合标准
                 if self.criteria.check(result):
-                    logger.info(f"✓ Alpha {result.alpha_id} 符合提交标准 "
+                    logger.info(f"✓ Alpha {alpha_label} 符合提交标准 "
                               f"(Sharpe: {result.sharpe:.3f}, Fitness: {result.fitness:.3f})")
 
                     # 检查相关性
@@ -165,7 +166,7 @@ class AlphaSubmitter:
                         record.correlation_passed = max_corr < max_correlation
 
                         if not record.correlation_passed:
-                            logger.warning(f"✗ Alpha {result.alpha_id} 相关性过高 ({max_corr:.3f})，跳过提交")
+                            logger.warning(f"✗ Alpha {alpha_label} 相关性过高 ({max_corr:.3f})，跳过提交")
                             records.append(record)
                             continue
 
@@ -176,11 +177,11 @@ class AlphaSubmitter:
                         record.submit_time = datetime.now().isoformat()
 
                         if success:
-                            logger.info(f"✓ Alpha {result.alpha_id} 提交成功")
+                            logger.info(f"✓ Alpha {alpha_label} 提交成功")
                         else:
-                            logger.error(f"✗ Alpha {result.alpha_id} 提交失败")
+                            logger.error(f"✗ Alpha {alpha_label} 提交失败")
                 else:
-                    logger.info(f"✗ Alpha {result.alpha_id} 不符合标准 "
+                    logger.info(f"✗ Alpha {alpha_label} 不符合标准 "
                               f"(Sharpe: {result.sharpe:.3f}, Fitness: {result.fitness:.3f})")
 
                 records.append(record)

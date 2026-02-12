@@ -87,7 +87,12 @@ class WorldQuantBrainClient:
         self.session = requests.Session()
         self.auth_token: Optional[str] = None
         self.refresh_token: Optional[str] = None
+        self.use_bearer_auth: bool = False
         self.token_expiry: float = 0
+
+    def _has_session_cookie(self) -> bool:
+        """检查当前会话是否持有认证 cookie"""
+        return len(self.session.cookies) > 0
 
     def authenticate(self) -> bool:
         """
@@ -110,14 +115,45 @@ class WorldQuantBrainClient:
             )
             response.raise_for_status()
 
-            data = response.json()
-            self.auth_token = data.get("token")
-            self.refresh_token = data.get("refreshToken")
-            # Token 通常有效期为 24 小时
-            self.token_expiry = time.time() + 82800  # 23 小时后刷新
+            data = {}
+            try:
+                if response.text.strip():
+                    data = response.json()
+            except ValueError:
+                data = {}
 
-            logger.info(f"认证成功: {self.username}")
-            return True
+            token = None
+            refresh_token = None
+            if isinstance(data, dict):
+                token = (
+                    data.get("token")
+                    or data.get("accessToken")
+                    or data.get("access_token")
+                    or data.get("jwt")
+                )
+                refresh_token = data.get("refreshToken") or data.get("refresh_token")
+
+            if self._has_session_cookie():
+                # 优先使用 Session Cookie：兼容性更好，Bearer 仅作为兜底
+                self.auth_token = token
+                self.refresh_token = refresh_token
+                self.use_bearer_auth = False
+                # cookie 过期时间不一定可用，使用保守刷新时间
+                self.token_expiry = time.time() + 82800
+                logger.info(f"认证成功(Session): {self.username}")
+                return True
+
+            if token:
+                self.auth_token = token
+                self.refresh_token = refresh_token
+                self.use_bearer_auth = True
+                # Token 通常有效期为 24 小时
+                self.token_expiry = time.time() + 82800  # 23 小时后刷新
+                logger.info(f"认证成功(Bearer): {self.username}")
+                return True
+
+            logger.error("认证失败: 响应中未获取到 token，且无会话 cookie")
+            return False
 
         except requests.exceptions.RequestException as e:
             logger.error(f"认证失败: {e}")
@@ -125,18 +161,26 @@ class WorldQuantBrainClient:
 
     def _ensure_authenticated(self):
         """确保已认证，如果 token 即将过期则刷新"""
-        if not self.auth_token or time.time() >= self.token_expiry:
+        needs_auth = time.time() >= self.token_expiry
+        if self.use_bearer_auth:
+            needs_auth = needs_auth or not self.auth_token
+        else:
+            needs_auth = needs_auth or not self._has_session_cookie()
+
+        if needs_auth:
             if not self.authenticate():
                 raise Exception("无法完成认证")
 
     def _get_headers(self) -> Dict[str, str]:
         """获取带认证的请求头"""
         self._ensure_authenticated()
-        return {
-            "Authorization": f"Bearer {self.auth_token}",
+        headers = {
             "Content-Type": "application/json",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
+        if self.use_bearer_auth and self.auth_token:
+            headers["Authorization"] = f"Bearer {self.auth_token}"
+        return headers
 
     def _should_retry_auth(self, response: requests.Response) -> bool:
         if response.status_code in (401, 403):
@@ -173,8 +217,14 @@ class WorldQuantBrainClient:
             logger.warning("认证可能失效，尝试重新认证并重试...")
             self.auth_token = None
             self.refresh_token = None
+            self.use_bearer_auth = False
+            self.token_expiry = 0
+            self.session.cookies.clear()
             if not self.authenticate():
                 return response
+            # 二次尝试时移除外部传入的旧 Authorization，避免复用失效凭证
+            if headers and "Authorization" in headers:
+                headers = {k: v for k, v in headers.items() if k != "Authorization"}
 
         return response
 
