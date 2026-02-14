@@ -4,6 +4,7 @@ WorldQuant Brain API 客户端
 """
 
 import json
+import os
 import time
 import requests
 from requests.auth import HTTPBasicAuth
@@ -18,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 class Region(Enum):
     """支持的交易区域"""
+    GLB = "GLB"
     USA = "USA"
     CHN = "CHN"  # 中国市场
     EUR = "EUR"
@@ -30,6 +32,7 @@ class Region(Enum):
 
 class Unviverse(Enum):
     """股票池 Universe"""
+    TOPDIV3000 = "TOPDIV3000"
     TOP3000 = "TOP3000"
     TOP2000 = "TOP2000"
     TOP1000 = "TOP1000"
@@ -85,6 +88,9 @@ class WorldQuantBrainClient:
         self.username = username
         self.password = password
         self.session = requests.Session()
+        # 某些环境下系统代理会导致 API 连接不稳定，可按需关闭
+        if os.getenv("WQB_DISABLE_PROXY", "").lower() in {"1", "true", "yes", "on"}:
+            self.session.trust_env = False
         self.auth_token: Optional[str] = None
         self.refresh_token: Optional[str] = None
         self.use_bearer_auth: bool = False
@@ -183,15 +189,22 @@ class WorldQuantBrainClient:
         return headers
 
     def _should_retry_auth(self, response: requests.Response) -> bool:
-        if response.status_code in (401, 403):
+        if response.status_code == 401:
             return True
+        if response.status_code != 403:
+            return False
         try:
             data = response.json()
         except Exception:
             return False
         detail = str(data.get("detail", "")).lower()
         message = str(data.get("message", "")).lower()
-        return "incorrect authentication credentials" in detail or "incorrect authentication credentials" in message
+        return (
+            "incorrect authentication credentials" in detail
+            or "incorrect authentication credentials" in message
+            or "authentication credentials were not provided" in detail
+            or "authentication credentials were not provided" in message
+        )
 
     def _request(self, method: str, url: str, **kwargs) -> requests.Response:
         """统一请求入口，自动处理认证失效重试"""
@@ -443,6 +456,13 @@ class WorldQuantBrainClient:
                 # metrics 在 'is' 字段中
                 is_data = data.get("is", {})
                 metrics = is_data if is_data else {}
+                checks = metrics.get("checks", []) if isinstance(metrics, dict) else []
+                is_submittable = bool(data.get("is.submittable", False))
+                # 某些接口不返回 is.submittable，尝试由 checks 推断
+                if not is_submittable and isinstance(checks, list) and checks:
+                    has_fail = any(c.get("result") == "FAIL" for c in checks)
+                    has_pending = any(c.get("result") == "PENDING" for c in checks)
+                    is_submittable = not has_fail and not has_pending
                 
                 return SimulateResult(
                     alpha_id=alpha_id,
@@ -453,7 +473,7 @@ class WorldQuantBrainClient:
                     returns=metrics.get("returns", 0),
                     drawdown=metrics.get("drawdown", 0),
                     margin=metrics.get("margin", 0),
-                    is_submittable=data.get("is.submittable", False)
+                    is_submittable=is_submittable
                 )
             else:
                 error_msg = f"获取 Alpha 结果失败: HTTP {response.status_code}"
@@ -570,7 +590,32 @@ class WorldQuantBrainClient:
                 logger.info(f"Alpha {alpha_id} 提交成功")
                 return True
             else:
-                error_msg = response.json().get("message", "未知错误")
+                error_msg = f"HTTP {response.status_code}"
+                try:
+                    payload = response.json()
+                    checks = payload.get("is", {}).get("checks", [])
+                    failed_checks = [
+                        c.get("name")
+                        for c in checks
+                        if c.get("result") == "FAIL"
+                    ]
+                    pending_checks = [
+                        c.get("name")
+                        for c in checks
+                        if c.get("result") == "PENDING"
+                    ]
+                    if failed_checks or pending_checks:
+                        chunks = []
+                        if failed_checks:
+                            chunks.append(f"FAIL={','.join(failed_checks)}")
+                        if pending_checks:
+                            chunks.append(f"PENDING={','.join(pending_checks)}")
+                        error_msg = "; ".join(chunks)
+                    elif isinstance(payload, dict):
+                        error_msg = payload.get("message", str(payload))
+                except Exception:
+                    if response.text:
+                        error_msg = response.text[:300]
                 logger.error(f"提交失败: {error_msg}")
                 return False
 

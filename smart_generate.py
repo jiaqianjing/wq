@@ -216,7 +216,7 @@ def main():
     run_parser.add_argument('-c', '--count', type=int, default=10,
                            help='生成数量')
     run_parser.add_argument('-r', '--region', default='USA',
-                           choices=['USA', 'CHN', 'EUR', 'JPN', 'TWN', 'KOR', 'GBR', 'DEU'],
+                           choices=['GLB', 'USA', 'CHN', 'EUR', 'JPN', 'TWN', 'KOR', 'GBR', 'DEU'],
                            help='交易区域')
     run_parser.add_argument('--submit', action='store_true',
                            help='自动提交符合条件的 Alpha')

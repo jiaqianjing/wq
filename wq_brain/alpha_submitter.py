@@ -44,8 +44,7 @@ class SubmissionCriteria:
             result.fitness >= self.min_fitness and
             result.turnover <= self.max_turnover and
             result.drawdown <= self.max_drawdown and
-            result.returns >= self.min_returns and
-            result.is_submittable
+            result.returns >= self.min_returns
         )
 
 

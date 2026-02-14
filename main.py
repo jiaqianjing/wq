@@ -303,7 +303,7 @@ def main():
     simulate_parser.add_argument('-c', '--count', type=int, default=5,
                                 help='生成数量')
     simulate_parser.add_argument('-r', '--region', default='USA',
-                                choices=['USA', 'CHN', 'EUR', 'JPN', 'TWN', 'KOR', 'GBR', 'DEU'],
+                                choices=['GLB', 'USA', 'CHN', 'EUR', 'JPN', 'TWN', 'KOR', 'GBR', 'DEU'],
                                 help='交易区域')
 
     # submit 命令
@@ -314,7 +314,7 @@ def main():
     submit_parser.add_argument('-c', '--count', type=int, default=5,
                               help='生成数量')
     submit_parser.add_argument('-r', '--region', default='USA',
-                              choices=['USA', 'CHN', 'EUR', 'JPN', 'TWN', 'KOR', 'GBR', 'DEU'],
+                              choices=['GLB', 'USA', 'CHN', 'EUR', 'JPN', 'TWN', 'KOR', 'GBR', 'DEU'],
                               help='交易区域')
     submit_parser.add_argument('--min-sharpe', type=float, default=1.25,
                               help='最低 Sharpe 比率')
