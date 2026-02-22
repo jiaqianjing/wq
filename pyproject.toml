@@ -11,6 +11,9 @@ dependencies = [
     "dotenv>=0.9.9",
 ]
 
+[tool.setuptools.packages.find]
+include = ["wq_brain*"]
+
 [project.scripts]
 wq-brain = "main:main"
 
