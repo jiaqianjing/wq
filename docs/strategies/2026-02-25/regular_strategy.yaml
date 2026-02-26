@@ -1,0 +1,20 @@
+name: usa_regular_research_tuning
+date: 2026-02-25
+region: USA
+universe: TOP3000
+delay: 1
+criteria:
+  min_sharpe: 1.25
+  min_fitness: 0.7
+  min_turnover: 0.01
+  max_turnover: 0.7
+  max_drawdown: 0.1
+  min_returns: 0.0
+pipeline:
+  - latest_research_scan: RFS / NBER / arXiv / Sciencedirect
+  - signal_mapping: reversal + fundamental (primary)
+  - run: scripts/usa_regular_research_tuning.py
+outputs:
+  - docs/strategies/2026-02-25/usa_regular_research_results.json
+  - docs/strategies/2026-02-25/regular_summary.md
+  - docs/strategies/2026-02-25/regular_report.txt

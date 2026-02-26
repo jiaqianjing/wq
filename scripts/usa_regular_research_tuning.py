@@ -111,15 +111,34 @@ def build_candidates(max_candidates: int, seed: int) -> List[Dict[str, Any]]:
             "theme": "day_night_fundamental",
         })
 
-    # 去重 + 打散
+    # 去重
     dedup: Dict[str, Dict[str, Any]] = {}
     for c in candidates:
         dedup[c["expression"]] = c
     out = list(dedup.values())
 
+    # 优先顺序：先跑历史命中率更高的 reversal_fundamental，
+    # 再跑 reversal_volume，最后再探索 day_night_fundamental。
+    theme_priority = {
+        "reversal_fundamental": 0,
+        "reversal_volume": 1,
+        "fundamental_quality": 2,
+        "day_night_fundamental": 3,
+    }
+    out.sort(key=lambda x: theme_priority.get(x["theme"], 99))
+
+    # 每个主题内再随机，保留探索性
     rnd = random.Random(seed)
-    rnd.shuffle(out)
-    return out[:max_candidates]
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    for c in out:
+        grouped.setdefault(c["theme"], []).append(c)
+    ordered: List[Dict[str, Any]] = []
+    for theme in ["reversal_fundamental", "reversal_volume", "fundamental_quality", "day_night_fundamental"]:
+        bucket = grouped.get(theme, [])
+        rnd.shuffle(bucket)
+        ordered.extend(bucket)
+
+    return ordered[:max_candidates]
 
 
 def create_simulation(client: WorldQuantBrainClient, expression: str, settings: Dict[str, Any]) -> Tuple[str, str]:
