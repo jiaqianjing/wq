@@ -1142,10 +1142,26 @@ class AgentRuntime:
                 logger.exception("%s cycle failed", agent_name)
                 self.store.set_agent_status(agent_name, "error", str(exc))
                 self.store.add_event(level="error", kind=agent_name, message=str(exc))
+                summary = "error"
 
             elapsed = time.time() - started
-            remaining = max(interval_seconds - int(elapsed), 1)
+            remaining = self._next_sleep_seconds(agent_name, summary, interval_seconds, elapsed)
             self.stop_event.wait(remaining)
+
+    def _next_sleep_seconds(
+        self,
+        agent_name: str,
+        summary: str,
+        interval_seconds: int,
+        elapsed: float,
+    ) -> int:
+        if agent_name == "researcher":
+            return max(interval_seconds - int(elapsed), 1)
+
+        if summary in {"no queued ideas", "no promising experiments"}:
+            return min(15, interval_seconds)
+
+        return max(interval_seconds - int(elapsed), 1)
 
     def run_researcher_cycle(self) -> str:
         items = self.collector.collect()
