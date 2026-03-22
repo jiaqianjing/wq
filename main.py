@@ -27,6 +27,7 @@ import argparse
 import logging
 from typing import Optional
 from pathlib import Path
+from datetime import datetime
 
 try:
     import yaml
@@ -39,6 +40,7 @@ from wq_brain import WorldQuantBrainClient, AlphaGenerator, AlphaSubmitter
 from wq_brain.client import Region, Unviverse
 from wq_brain.alpha_submitter import SubmissionCriteria
 from wq_brain.strategy import load_strategy, build_alphas_by_type, save_templates, run_strategy
+from wq_brain.submission_failure_analyzer import generate_submission_failure_report
 
 logging.basicConfig(
     level=logging.INFO,
@@ -49,6 +51,31 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+
+def _generate_submission_analysis(client: WorldQuantBrainClient, tag: str):
+    """在提交流程后生成 submission failure 分析报告。"""
+    run_date = datetime.now().strftime("%Y-%m-%d")
+    out_dir = Path(f"docs/strategies/{run_date}")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    output_md = out_dir / f"{tag}_submission_failure_analysis.md"
+    output_json = out_dir / f"{tag}_submission_failure_summary.json"
+
+    try:
+        result = generate_submission_failure_report(
+            input_path=client.submission_log_path,
+            output_md=output_md,
+            output_json=output_json,
+        )
+        summary = result["summary"]
+        logger.info(
+            "submission analysis generated: %s (failed=%s, submitted=%s)",
+            result["output_md"],
+            summary.get("failed_records", 0),
+            summary.get("submitted_records", 0),
+        )
+    except Exception as e:
+        logger.warning(f"submission analysis generation failed: {e}")
 
 
 def load_config(config_path: str = "config.yaml") -> dict:
@@ -185,6 +212,7 @@ def cmd_submit(args):
     # 生成报告
     report = submitter.generate_report(all_records)
     print(report)
+    _generate_submission_analysis(client, tag="main_submit")
 
 
 def cmd_pending(args):
@@ -200,6 +228,7 @@ def cmd_pending(args):
         submitter = AlphaSubmitter(client)
         submitted = submitter.submit_pending_alphas()
         logger.info(f"成功提交 {submitted} 个 Alpha")
+    _generate_submission_analysis(client, tag="main_pending")
 
 
 def cmd_generate(args):

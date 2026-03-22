@@ -16,6 +16,7 @@ include = ["wq_brain*"]
 
 [project.scripts]
 wq-brain = "main:main"
+wqa = "wq_brain.agent_cli:main"
 
 [tool.uv]
 dev-dependencies = [

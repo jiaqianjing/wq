@@ -27,6 +27,7 @@ from dotenv import load_dotenv
 
 from wq_brain.alpha_generator import AlphaGenerator
 from wq_brain.client import SimulateResult, WorldQuantBrainClient
+from wq_brain.submission_failure_analyzer import generate_submission_failure_report
 
 
 @dataclass
@@ -253,38 +254,14 @@ def create_simulation(
     return "", "HTTP 429: rate limited"
 
 
-def submit_with_details(client: WorldQuantBrainClient, alpha_id: str) -> Tuple[bool, str]:
-    for _ in range(2):
-        resp = client._request(
-            "post", f"{client.BASE_URL}/alphas/{alpha_id}/submit", timeout=30
-        )
-        if resp.status_code in (200, 201):
-            return True, "submitted"
-        if resp.status_code == 429:
-            time.sleep(5)
-            continue
-
-        reason = f"HTTP {resp.status_code}"
-        try:
-            data = resp.json()
-            checks = data.get("is", {}).get("checks", [])
-            failed = [c.get("name") for c in checks if c.get("result") == "FAIL"]
-            pending = [c.get("name") for c in checks if c.get("result") == "PENDING"]
-            chunks = []
-            if failed:
-                chunks.append(f"FAIL={','.join(failed)}")
-            if pending:
-                chunks.append(f"PENDING={','.join(pending)}")
-            if chunks:
-                reason = "; ".join(chunks)
-            elif isinstance(data, dict):
-                reason = data.get("message", reason)
-        except Exception:
-            if resp.text:
-                reason = resp.text[:200]
-        return False, reason
-
-    return False, "HTTP 429: rate limited"
+def submit_with_details(
+    client: WorldQuantBrainClient, alpha_id: str, name: str = ""
+) -> Tuple[bool, str]:
+    result = client.submit_alpha_with_checks(
+        alpha_id=alpha_id,
+        name=name or None,
+    )
+    return result.submitted, result.reason
 
 
 def resolve_batch_results(
@@ -474,7 +451,11 @@ def main() -> None:
                 submitted = False
                 submit_reason = ""
                 if passed and result.alpha_id:
-                    submitted, submit_reason = submit_with_details(client, result.alpha_id)
+                    submitted, submit_reason = submit_with_details(
+                        client,
+                        result.alpha_id,
+                        name=str(c.get("name", "")).strip(),
+                    )
                     if submitted:
                         submitted_ids.append(result.alpha_id)
 
@@ -524,6 +505,18 @@ def main() -> None:
         "attempts": attempts,
     }
     results_path.write_text(json.dumps(final, indent=2), encoding="utf-8")
+
+    analysis_md = output_dir / "power_pool_submission_failure_analysis.md"
+    analysis_json = output_dir / "power_pool_submission_failure_summary.json"
+    try:
+        analysis = generate_submission_failure_report(
+            input_path=client.submission_log_path,
+            output_md=analysis_md,
+            output_json=analysis_json,
+        )
+        print(f"submission_analysis={analysis['output_md']}", flush=True)
+    except Exception as e:
+        print(f"submission_analysis_failed: {e}", flush=True)
 
     print("\n" + "=" * 80, flush=True)
     print("完成", flush=True)

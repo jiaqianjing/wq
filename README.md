@@ -110,6 +110,10 @@ python main.py pending
 `docs/` 用于记录每次批量生成与模拟的策略配置，以及对应的心得与复盘，方便积累经验并调整下一次生成策略。
 
 入口文档: `docs/README.md`
+提交流程文档: `docs/submission_workflow.md`（包含 Check Submission 与本地失败日志）
+失败分析脚本: `uv run python scripts/analyze_submission_failures.py`
+研究脚本会在结束时自动生成 submission failure analysis 报告
+`main.py submit` 与 `main.py pending` 也会自动生成 submission failure analysis 报告
 
 ## Alpha 类型说明
 

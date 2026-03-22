@@ -1,0 +1,66 @@
+# wqa: WorldQuant Agent Lab
+# 运行前建议：
+# 1. 填入 WorldQuant Brain 账号
+# 2. 至少选择一个 LLM profile（gemini 或 kimi）
+# 3. 如需通知，填入 Telegram bot token 与 chat_id
+
+app:
+  state_dir: ./.wqa-test
+  dashboard_host: 127.0.0.1
+  dashboard_port: 8765
+  loop_sleep_seconds: 10
+  default_claim_limit: 3
+
+providers:
+  gemini:
+    provider: gemini
+    model_name: gemini-2.5-pro
+    api_key: ${GEMINI_API_KEY}
+  kimi:
+    provider: kimi
+    model_name: moonshot-v1-8k
+    api_key: ${KIMI_API_KEY}
+    base_url: https://api.moonshot.cn/v1
+
+agents:
+  researcher:
+    enabled: true
+    interval_seconds: 900
+    llm_profile: gemini
+    idea_batch_size: 4
+  engineer:
+    enabled: true
+    interval_seconds: 300
+    llm_profile: kimi
+    alpha_batch_size: 4
+  reviewer:
+    enabled: true
+    interval_seconds: 180
+    llm_profile: kimi
+
+integrations:
+  worldquant:
+    username: ${WQB_USERNAME}
+    password: ${WQB_PASSWORD}
+    region: USA
+    universe: TOP3000
+    auto_submit: true
+  telegram:
+    enabled: false
+    bot_token: ${TG_BOT_TOKEN}
+    chat_id: ${TG_CHAT_ID}
+
+sources:
+  papers:
+    - name: arxiv-qfin
+      kind: atom
+      url: https://export.arxiv.org/api/query?search_query=cat:q-fin.ST&sortBy=submittedDate&sortOrder=descending&max_results=8
+  reports: []
+  market: []
+
+thresholds:
+  min_sharpe: 1.25
+  min_fitness: 0.7
+  max_turnover: 0.7
+  max_drawdown: 0.12
+  min_returns: 0.0

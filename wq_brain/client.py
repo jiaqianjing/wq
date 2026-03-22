@@ -8,8 +8,8 @@ import os
 import time
 import requests
 from requests.auth import HTTPBasicAuth
-from typing import Dict, List, Optional, Any
-from dataclasses import dataclass
+from typing import Dict, List, Optional, Any, Tuple
+from dataclasses import dataclass, asdict
 from enum import Enum
 import logging
 
@@ -77,12 +77,39 @@ class SimulateResult:
     error_message: Optional[str] = None
 
 
+@dataclass
+class SubmissionCheckResult:
+    """提交前检查结果"""
+    alpha_id: str
+    ok: bool
+    pass_count: int
+    fail_count: int
+    warning_count: int
+    pending_count: int
+    checks: List[Dict[str, Any]]
+    failed_checks: List[Dict[str, Any]]
+    warning_checks: List[Dict[str, Any]]
+    pending_checks: List[Dict[str, Any]]
+    error_message: Optional[str] = None
+
+
+@dataclass
+class SubmissionResult:
+    """完整提交流程结果（check -> submit -> status confirm）"""
+    alpha_id: str
+    submitted: bool
+    reason: str
+    check_result: Optional[SubmissionCheckResult] = None
+    submit_http_status: Optional[int] = None
+
+
 class WorldQuantBrainClient:
     """WorldQuant Brain API 客户端"""
 
     BASE_URL = "https://api.worldquantbrain.com"
     DEFAULT_SIMULATION_MAX_WAIT = 120
     DEFAULT_SIMULATION_RETRY_WAIT = 60
+    DEFAULT_CHECK_MAX_WAIT = 180
 
     def __init__(self, username: str, password: str):
         self.username = username
@@ -95,6 +122,77 @@ class WorldQuantBrainClient:
         self.refresh_token: Optional[str] = None
         self.use_bearer_auth: bool = False
         self.token_expiry: float = 0
+        self.submission_log_path = os.getenv(
+            "WQB_SUBMISSION_LOG", "./results/submission_checks.jsonl"
+        )
+        log_dir = os.path.dirname(self.submission_log_path)
+        if log_dir:
+            os.makedirs(log_dir, exist_ok=True)
+
+    @staticmethod
+    def _extract_checks(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+        if not isinstance(payload, dict):
+            return []
+        is_data = payload.get("is", {})
+        if isinstance(is_data, dict):
+            checks = is_data.get("checks", [])
+            if isinstance(checks, list):
+                return checks
+        return []
+
+    @staticmethod
+    def _split_checks(
+        checks: List[Dict[str, Any]]
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+        passed = [c for c in checks if c.get("result") == "PASS"]
+        failed = [c for c in checks if c.get("result") == "FAIL"]
+        warning = [c for c in checks if c.get("result") == "WARNING"]
+        pending = [c for c in checks if c.get("result") == "PENDING"]
+        return passed, failed, warning, pending
+
+    @staticmethod
+    def _infer_submission_category(
+        expression: str = "", preferred: Optional[str] = None
+    ) -> str:
+        valid = {
+            "PRICE_REVERSION",
+            "PRICE_MOMENTUM",
+            "VOLUME",
+            "FUNDAMENTAL",
+            "ANALYST",
+            "PRICE_VOLUME",
+            "RELATION",
+            "SENTIMENT",
+        }
+        if preferred and preferred in valid:
+            return preferred
+
+        text = f"{preferred or ''} {expression or ''}".lower()
+        if any(k in text for k in ["reversal", "reversion", "mean_reversion", "bollinger"]):
+            return "PRICE_REVERSION"
+        if "momentum" in text:
+            return "PRICE_MOMENTUM"
+        if any(k in text for k in ["volume", "adv", "turnover"]):
+            if any(k in text for k in ["price", "close", "open", "high", "low", "vwap"]):
+                return "PRICE_VOLUME"
+            return "VOLUME"
+        if any(k in text for k in ["fnd", "fundamental", "assets", "liabilities", "revenue", "roe", "pb"]):
+            return "FUNDAMENTAL"
+        if any(k in text for k in ["corr", "covariance", "relation"]):
+            return "RELATION"
+        if "analyst" in text:
+            return "ANALYST"
+        if "sentiment" in text:
+            return "SENTIMENT"
+        return "PRICE_VOLUME"
+
+    def _append_submission_log(self, record: Dict[str, Any]):
+        payload = {"ts": time.time(), **record}
+        try:
+            with open(self.submission_log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        except Exception as e:
+            logger.warning(f"写入提交日志失败: {e}")
 
     def _has_session_cookie(self) -> bool:
         """检查当前会话是否持有认证 cookie"""
@@ -567,9 +665,294 @@ class WorldQuantBrainClient:
             error_message="模拟超时"
         )
 
+    def set_alpha_properties(
+        self, alpha_id: str, name: Optional[str], category: Optional[str]
+    ) -> Tuple[bool, str]:
+        url = f"{self.BASE_URL}/alphas/{alpha_id}"
+        payload: Dict[str, Any] = {}
+        if name:
+            payload["name"] = name
+        if category:
+            payload["category"] = category
+
+        if not payload:
+            return True, "no-update"
+
+        try:
+            response = self._request("patch", url, json=payload, timeout=30)
+            if response.status_code == 200:
+                return True, "updated"
+            msg = response.text[:300] if response.text else f"HTTP {response.status_code}"
+            return False, msg
+        except requests.exceptions.RequestException as e:
+            return False, str(e)
+
+    def run_submission_check(
+        self, alpha_id: str, max_wait: int = DEFAULT_CHECK_MAX_WAIT
+    ) -> SubmissionCheckResult:
+        """
+        显式触发并等待提交检查完成（对应网页 Check Submission 按钮）。
+        """
+        url = f"{self.BASE_URL}/alphas/{alpha_id}/check"
+        start = time.time()
+
+        while time.time() - start < max_wait:
+            try:
+                response = self._request("get", url, timeout=30)
+                if response.status_code != 200:
+                    return SubmissionCheckResult(
+                        alpha_id=alpha_id,
+                        ok=False,
+                        pass_count=0,
+                        fail_count=0,
+                        warning_count=0,
+                        pending_count=0,
+                        checks=[],
+                        failed_checks=[],
+                        warning_checks=[],
+                        pending_checks=[],
+                        error_message=f"HTTP {response.status_code}: {response.text[:200]}",
+                    )
+
+                retry_after = response.headers.get("Retry-After")
+                if retry_after:
+                    time.sleep(float(retry_after))
+                    continue
+
+                raw = response.text.strip()
+                if not raw:
+                    time.sleep(1)
+                    continue
+
+                payload = response.json()
+                checks = self._extract_checks(payload)
+                passed, failed, warning, pending = self._split_checks(checks)
+                return SubmissionCheckResult(
+                    alpha_id=alpha_id,
+                    ok=len(failed) == 0 and len(pending) == 0,
+                    pass_count=len(passed),
+                    fail_count=len(failed),
+                    warning_count=len(warning),
+                    pending_count=len(pending),
+                    checks=checks,
+                    failed_checks=failed,
+                    warning_checks=warning,
+                    pending_checks=pending,
+                )
+            except Exception as e:
+                logger.warning(f"提交检查轮询异常: {e}")
+                time.sleep(2)
+
+        return SubmissionCheckResult(
+            alpha_id=alpha_id,
+            ok=False,
+            pass_count=0,
+            fail_count=0,
+            warning_count=0,
+            pending_count=1,
+            checks=[],
+            failed_checks=[],
+            warning_checks=[],
+            pending_checks=[{"name": "CHECK_TIMEOUT", "result": "PENDING"}],
+            error_message=f"check timeout>{max_wait}s",
+        )
+
+    def _wait_for_submitted_status(self, alpha_id: str, max_wait: int = 20) -> bool:
+        """
+        提交后确认状态，避免“接口返回成功但网页仍 UNSUBMITTED”。
+        """
+        url = f"{self.BASE_URL}/alphas/{alpha_id}"
+        start = time.time()
+        while time.time() - start < max_wait:
+            try:
+                response = self._request("get", url, timeout=30)
+                if response.status_code == 200:
+                    payload = response.json()
+                    if payload.get("status") == "SUBMITTED" or payload.get("dateSubmitted"):
+                        return True
+                time.sleep(2)
+            except Exception:
+                time.sleep(2)
+        return False
+
+    def submit_alpha_with_checks(
+        self,
+        alpha_id: str,
+        name: Optional[str] = None,
+        category: Optional[str] = None,
+        check_max_wait: int = DEFAULT_CHECK_MAX_WAIT,
+    ) -> SubmissionResult:
+        """
+        完整提交流程：设置属性 -> Check Submission -> Submit Alpha -> 状态确认
+        """
+        try:
+            alpha_resp = self._request("get", f"{self.BASE_URL}/alphas/{alpha_id}", timeout=30)
+            alpha_data = alpha_resp.json() if alpha_resp.status_code == 200 else {}
+        except Exception:
+            alpha_data = {}
+
+        expression = ""
+        regular_data = alpha_data.get("regular", {})
+        if isinstance(regular_data, dict):
+            expression = regular_data.get("code", "")
+        elif isinstance(regular_data, str):
+            expression = regular_data
+
+        existing_name = alpha_data.get("name", "")
+        final_name = name or existing_name
+        if not final_name or str(final_name).strip().lower() in {"anonymous", "currently 'anonymous'"}:
+            final_name = f"alpha_{alpha_id}"
+
+        existing_category = alpha_data.get("category")
+        final_category = self._infer_submission_category(
+            expression=expression, preferred=category or existing_category
+        )
+
+        ok, update_reason = self.set_alpha_properties(alpha_id, final_name, final_category)
+        if not ok:
+            reason = f"set properties failed: {update_reason}"
+            self._append_submission_log(
+                {
+                    "alpha_id": alpha_id,
+                    "submitted": False,
+                    "phase": "set_properties",
+                    "reason": reason,
+                    "name": final_name,
+                    "category": final_category,
+                }
+            )
+            return SubmissionResult(alpha_id=alpha_id, submitted=False, reason=reason)
+
+        check_result = self.run_submission_check(alpha_id, max_wait=check_max_wait)
+        if not check_result.ok:
+            fail_names = [c.get("name") for c in check_result.failed_checks]
+            pending_names = [c.get("name") for c in check_result.pending_checks]
+            parts = []
+            if fail_names:
+                parts.append(f"FAIL={','.join(fail_names)}")
+            if pending_names:
+                parts.append(f"PENDING={','.join(pending_names)}")
+            reason = "; ".join(parts) if parts else (check_result.error_message or "check failed")
+            self._append_submission_log(
+                {
+                    "alpha_id": alpha_id,
+                    "submitted": False,
+                    "phase": "check",
+                    "reason": reason,
+                    "name": final_name,
+                    "category": final_category,
+                    "check_result": asdict(check_result),
+                }
+            )
+            return SubmissionResult(
+                alpha_id=alpha_id,
+                submitted=False,
+                reason=reason,
+                check_result=check_result,
+            )
+
+        url = f"{self.BASE_URL}/alphas/{alpha_id}/submit"
+        try:
+            response = self._request("post", url, timeout=30)
+            submit_status = response.status_code
+            if submit_status in (200, 201):
+                confirmed = self._wait_for_submitted_status(alpha_id)
+                if confirmed:
+                    self._append_submission_log(
+                        {
+                            "alpha_id": alpha_id,
+                            "submitted": True,
+                            "phase": "submit",
+                            "reason": "submitted",
+                            "name": final_name,
+                            "category": final_category,
+                            "submit_http_status": submit_status,
+                            "check_result": asdict(check_result),
+                        }
+                    )
+                    return SubmissionResult(
+                        alpha_id=alpha_id,
+                        submitted=True,
+                        reason="submitted",
+                        check_result=check_result,
+                        submit_http_status=submit_status,
+                    )
+                reason = "submit accepted but status still UNSUBMITTED"
+                self._append_submission_log(
+                    {
+                        "alpha_id": alpha_id,
+                        "submitted": False,
+                        "phase": "submit",
+                        "reason": reason,
+                        "name": final_name,
+                        "category": final_category,
+                        "submit_http_status": submit_status,
+                        "check_result": asdict(check_result),
+                    }
+                )
+                return SubmissionResult(
+                    alpha_id=alpha_id,
+                    submitted=False,
+                    reason=reason,
+                    check_result=check_result,
+                    submit_http_status=submit_status,
+                )
+
+            payload = {}
+            try:
+                payload = response.json()
+            except Exception:
+                payload = {}
+            checks = self._extract_checks(payload)
+            _, failed, _, pending = self._split_checks(checks)
+            parts = []
+            if failed:
+                parts.append("FAIL=" + ",".join(c.get("name", "UNKNOWN") for c in failed))
+            if pending:
+                parts.append("PENDING=" + ",".join(c.get("name", "UNKNOWN") for c in pending))
+            reason = "; ".join(parts) if parts else (response.text[:300] if response.text else f"HTTP {submit_status}")
+            self._append_submission_log(
+                {
+                    "alpha_id": alpha_id,
+                    "submitted": False,
+                    "phase": "submit",
+                    "reason": reason,
+                    "name": final_name,
+                    "category": final_category,
+                    "submit_http_status": submit_status,
+                    "check_result": asdict(check_result),
+                }
+            )
+            return SubmissionResult(
+                alpha_id=alpha_id,
+                submitted=False,
+                reason=reason,
+                check_result=check_result,
+                submit_http_status=submit_status,
+            )
+        except requests.exceptions.RequestException as e:
+            reason = str(e)
+            self._append_submission_log(
+                {
+                    "alpha_id": alpha_id,
+                    "submitted": False,
+                    "phase": "submit",
+                    "reason": reason,
+                    "name": final_name,
+                    "category": final_category,
+                    "check_result": asdict(check_result),
+                }
+            )
+            return SubmissionResult(
+                alpha_id=alpha_id,
+                submitted=False,
+                reason=reason,
+                check_result=check_result,
+            )
+
     def submit_alpha(self, alpha_id: str) -> bool:
         """
-        提交 Alpha
+        提交 Alpha（包含 Check Submission 与状态确认）
 
         Args:
             alpha_id: Alpha ID
@@ -577,51 +960,12 @@ class WorldQuantBrainClient:
         Returns:
             bool: 是否提交成功
         """
-        url = f"{self.BASE_URL}/alphas/{alpha_id}/submit"
-
-        try:
-            response = self._request(
-                "post",
-                url,
-                timeout=30
-            )
-
-            if response.status_code in [200, 201]:
-                logger.info(f"Alpha {alpha_id} 提交成功")
-                return True
-            else:
-                error_msg = f"HTTP {response.status_code}"
-                try:
-                    payload = response.json()
-                    checks = payload.get("is", {}).get("checks", [])
-                    failed_checks = [
-                        c.get("name")
-                        for c in checks
-                        if c.get("result") == "FAIL"
-                    ]
-                    pending_checks = [
-                        c.get("name")
-                        for c in checks
-                        if c.get("result") == "PENDING"
-                    ]
-                    if failed_checks or pending_checks:
-                        chunks = []
-                        if failed_checks:
-                            chunks.append(f"FAIL={','.join(failed_checks)}")
-                        if pending_checks:
-                            chunks.append(f"PENDING={','.join(pending_checks)}")
-                        error_msg = "; ".join(chunks)
-                    elif isinstance(payload, dict):
-                        error_msg = payload.get("message", str(payload))
-                except Exception:
-                    if response.text:
-                        error_msg = response.text[:300]
-                logger.error(f"提交失败: {error_msg}")
-                return False
-
-        except requests.exceptions.RequestException as e:
-            logger.error(f"提交请求异常: {e}")
-            return False
+        result = self.submit_alpha_with_checks(alpha_id)
+        if result.submitted:
+            logger.info(f"Alpha {alpha_id} 提交成功")
+        else:
+            logger.error(f"提交失败: {result.reason}")
+        return result.submitted
 
     def get_submittable_alphas(self) -> List[Dict[str, Any]]:
         """

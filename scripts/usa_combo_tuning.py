@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Tuple
 from dotenv import load_dotenv
 
 from wq_brain.client import SimulateResult, WorldQuantBrainClient
+from wq_brain.submission_failure_analyzer import generate_submission_failure_report
 
 
 @dataclass
@@ -229,26 +230,14 @@ def resolve_batch(
     return resolved
 
 
-def submit_alpha(client: WorldQuantBrainClient, alpha_id: str) -> Tuple[bool, str]:
-    r = client._request("post", f"{client.BASE_URL}/alphas/{alpha_id}/submit", timeout=30)
-    if r.status_code in (200, 201):
-        return True, "submitted"
-    reason = f"HTTP {r.status_code}"
-    try:
-        data = r.json()
-        checks = data.get("is", {}).get("checks", [])
-        fail = [x.get("name") for x in checks if x.get("result") == "FAIL"]
-        pend = [x.get("name") for x in checks if x.get("result") == "PENDING"]
-        chunks = []
-        if fail:
-            chunks.append("FAIL=" + ",".join(fail))
-        if pend:
-            chunks.append("PENDING=" + ",".join(pend))
-        if chunks:
-            reason = "; ".join(chunks)
-    except Exception:
-        pass
-    return False, reason
+def submit_alpha(
+    client: WorldQuantBrainClient, alpha_id: str, name: str = ""
+) -> Tuple[bool, str]:
+    result = client.submit_alpha_with_checks(
+        alpha_id=alpha_id,
+        name=name or None,
+    )
+    return result.submitted, result.reason
 
 
 def main() -> None:
@@ -324,7 +313,11 @@ def main() -> None:
             ok = False
             submit_reason = ""
             if passed and sim.alpha_id:
-                ok, submit_reason = submit_alpha(client, sim.alpha_id)
+                ok, submit_reason = submit_alpha(
+                    client,
+                    sim.alpha_id,
+                    name=str(cand.get("name", "")).strip(),
+                )
                 if ok:
                     submitted.append(sim.alpha_id)
             attempts.append(
@@ -358,6 +351,18 @@ def main() -> None:
             ),
             encoding="utf-8",
         )
+
+    analysis_md = out_dir / "usa_combo_submission_failure_analysis.md"
+    analysis_json = out_dir / "usa_combo_submission_failure_summary.json"
+    try:
+        analysis = generate_submission_failure_report(
+            input_path=client.submission_log_path,
+            output_md=analysis_md,
+            output_json=analysis_json,
+        )
+        print(f"submission_analysis={analysis['output_md']}", flush=True)
+    except Exception as e:
+        print(f"submission_analysis_failed: {e}", flush=True)
 
     print(f"done submitted={len(submitted)} file={out_file}", flush=True)
 
