@@ -25,6 +25,8 @@ env/
 
 # 结果和日志
 results/
+.wqa/
+.wqa-test/
 *.log
 wq_brain.log
 

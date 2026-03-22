@@ -58,8 +58,10 @@ http://127.0.0.1:8765
 
 - 任务总览
 - agent 状态
+- best experiment 快照
 - idea 队列
 - experiment 列表
+- feedback loop 面板
 - event log
 
 ## 当前实现边界
@@ -68,3 +70,4 @@ http://127.0.0.1:8765
 - Gemini 通过 Google Gemini `generateContent` 接口调用。
 - Kimi 通过 OpenAI-compatible `chat/completions` 方式调用，默认 `base_url` 为 `https://api.moonshot.cn/v1`。
 - 如果缺少 LLM 或 WorldQuant 配置，系统会自动降级到本地 fallback 流程，并将实验标记为 `blocked` 或使用启发式 ideas。
+- Idea 入队时会按 `title + source_url` 去重，减少重复 source 把队列反复刷满。

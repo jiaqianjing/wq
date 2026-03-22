@@ -1,7 +1,7 @@
 [project]
-name = "wq-brain-automation"
+name = "wqa"
 version = "0.1.0"
-description = "WorldQuant Brain Alpha 自动提交系统"
+description = "WorldQuant multi-agent research and submission runtime"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -15,11 +15,10 @@ dependencies = [
 include = ["wq_brain*"]
 
 [project.scripts]
-wq-brain = "main:main"
 wqa = "wq_brain.agent_cli:main"
 
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
     "pytest>=8.0.0",
     "black>=24.0.0",
     "ruff>=0.3.0",

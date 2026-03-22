@@ -182,6 +182,7 @@ class RuntimeStore:
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+            CREATE INDEX IF NOT EXISTS idx_ideas_status_priority ON ideas(status, priority, created_at);
 
             CREATE TABLE IF NOT EXISTS experiments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -202,6 +203,7 @@ class RuntimeStore:
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY (idea_id) REFERENCES ideas(id)
             );
+            CREATE INDEX IF NOT EXISTS idx_experiments_status_updated ON experiments(status, updated_at);
 
             CREATE TABLE IF NOT EXISTS events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -267,6 +269,17 @@ class RuntimeStore:
         inserted = 0
         now = utc_now()
         for idea in ideas:
+            existing = cur.execute(
+                """
+                SELECT id FROM ideas
+                WHERE title = ? AND COALESCE(source_url, '') = COALESCE(?, '')
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (idea["title"], idea.get("source_url")),
+            ).fetchone()
+            if existing:
+                continue
             cur.execute(
                 """
                 INSERT INTO ideas (
@@ -494,6 +507,22 @@ class RuntimeStore:
         conn.close()
         return [dict(row) for row in rows]
 
+    def list_feedback(self, limit: int = 12) -> List[Dict[str, Any]]:
+        conn = self._connect()
+        rows = conn.execute(
+            """
+            SELECT i.title AS idea_title, e.alpha_name, e.status, e.sharpe, e.fitness,
+                   e.turnover, e.drawdown, e.returns, e.submission_result, e.updated_at
+            FROM experiments e
+            JOIN ideas i ON i.id = e.idea_id
+            ORDER BY e.updated_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
     def summary(self) -> Dict[str, Any]:
         conn = self._connect()
         counts = {}
@@ -511,12 +540,36 @@ class RuntimeStore:
                 "SELECT status, COUNT(*) FROM experiments GROUP BY status"
             ).fetchall()
         }
+        best_experiment_row = conn.execute(
+            """
+            SELECT e.id, e.alpha_name, e.sharpe, e.fitness, e.turnover, e.status, i.title AS idea_title
+            FROM experiments e
+            JOIN ideas i ON i.id = e.idea_id
+            WHERE e.sharpe IS NOT NULL
+            ORDER BY e.sharpe DESC, e.updated_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        best_experiment = dict(best_experiment_row) if best_experiment_row else None
+        latest_accept_row = conn.execute(
+            """
+            SELECT e.id, e.status, e.submission_result, i.title AS idea_title, e.alpha_name, e.updated_at
+            FROM experiments e
+            JOIN ideas i ON i.id = e.idea_id
+            WHERE e.status IN ('accepted', 'submitted')
+            ORDER BY e.updated_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        latest_accept = dict(latest_accept_row) if latest_accept_row else None
         conn.close()
         return {
             "counts": counts,
             "idea_status": idea_status,
             "experiment_status": experiment_status,
             "agents": self.list_agent_status(),
+            "best_experiment": best_experiment,
+            "latest_accept": latest_accept,
         }
 
 
@@ -643,7 +696,8 @@ class SourceCollector:
         url = source.get("url", "")
         if not url:
             return []
-        response = requests.get(url, timeout=45)
+        timeout_seconds = int(source.get("timeout_seconds", 15))
+        response = requests.get(url, timeout=timeout_seconds)
         response.raise_for_status()
         root = ElementTree.fromstring(response.text)
         items: List[SourceItem] = []
@@ -712,6 +766,9 @@ class DashboardServer:
                     return
                 if self.path == "/api/events":
                     self._send_json(store.list_recent_events())
+                    return
+                if self.path == "/api/feedback":
+                    self._send_json(store.list_feedback())
                     return
                 self._send_html(render_dashboard_html())
 
@@ -857,6 +914,10 @@ def render_dashboard_html() -> str:
       <h2>Agent Status</h2>
       <div id="agents">Loading...</div>
     </section>
+    <section class="card">
+      <h2>Best Result</h2>
+      <div id="best">Loading...</div>
+    </section>
   </div>
   <div class="grid" style="margin-top:16px;">
     <section class="card">
@@ -868,6 +929,10 @@ def render_dashboard_html() -> str:
       <div id="experiments">Loading...</div>
     </section>
   </div>
+  <section class="card" style="margin-top:16px;">
+    <h2>Feedback Loop</h2>
+    <div id="feedback">Loading...</div>
+  </section>
   <section class="card" style="margin-top:16px;">
     <h2>Event Log</h2>
     <div id="events">Loading...</div>
@@ -885,6 +950,9 @@ function renderSummary(summary) {
   for (const [key, value] of Object.entries(counts)) {
     lines.push(`<div class="stat"><span>${key}</span><strong>${value}</strong></div>`);
   }
+  if ((summary.latest_accept || {}).idea_title) {
+    lines.push(`<div class="stat"><span>latest accept</span><strong>${summary.latest_accept.idea_title}</strong></div>`);
+  }
   document.querySelector("#summary").innerHTML = lines.join("") || "<div>No data</div>";
 }
 
@@ -893,6 +961,20 @@ function renderAgents(items) {
     `<div class="stat"><div><strong>${item.agent_name}</strong><span class="pill">${item.state}</span><div>${item.summary || ""}</div></div><div class="mono">${item.last_heartbeat || ""}</div></div>`
   )).join("");
   document.querySelector("#agents").innerHTML = html || "<div>No agent heartbeat yet</div>";
+}
+
+function renderBest(item) {
+  if (!item) {
+    document.querySelector("#best").innerHTML = "<div>No completed experiment yet</div>";
+    return;
+  }
+  document.querySelector("#best").innerHTML = `
+    <div class="stat"><span>idea</span><strong>${item.idea_title}</strong></div>
+    <div class="stat"><span>alpha</span><strong>${item.alpha_name || "-"}</strong></div>
+    <div class="stat"><span>sharpe</span><strong class="good">${item.sharpe ?? "-"}</strong></div>
+    <div class="stat"><span>fitness</span><strong>${item.fitness ?? "-"}</strong></div>
+    <div class="stat"><span>turnover</span><strong>${item.turnover ?? "-"}</strong></div>
+  `;
 }
 
 function renderIdeas(items) {
@@ -909,6 +991,13 @@ function renderExperiments(items) {
   document.querySelector("#experiments").innerHTML = `<table><thead><tr><th>Experiment</th><th>Status</th><th>Sharpe</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
+function renderFeedback(items) {
+  const rows = (items || []).map(item => (
+    `<tr><td><strong>${item.idea_title}</strong><div class="mono">${item.alpha_name || ""}</div></td><td>${item.status}</td><td>${item.sharpe ?? "-"}</td><td>${item.turnover ?? "-"}</td></tr>`
+  )).join("");
+  document.querySelector("#feedback").innerHTML = `<table><thead><tr><th>Idea</th><th>Status</th><th>Sharpe</th><th>Turnover</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
 function renderEvents(items) {
   const rows = (items || []).map(item => (
     `<div class="stat"><div><strong>${item.kind}</strong><div>${item.message}</div></div><div class="mono">${item.created_at}</div></div>`
@@ -917,16 +1006,19 @@ function renderEvents(items) {
 }
 
 async function refresh() {
-  const [summary, ideas, experiments, events] = await Promise.all([
+  const [summary, ideas, experiments, feedback, events] = await Promise.all([
     getJSON("/api/summary"),
     getJSON("/api/ideas"),
     getJSON("/api/experiments"),
+    getJSON("/api/feedback"),
     getJSON("/api/events"),
   ]);
   renderSummary(summary);
   renderAgents(summary.agents || []);
+  renderBest(summary.best_experiment);
   renderIdeas(ideas);
   renderExperiments(experiments);
+  renderFeedback(feedback);
   renderEvents(events);
 }
 
@@ -986,6 +1078,8 @@ class AgentRuntime:
             "pid": os.getpid(),
             "started_at": utc_now(),
             "config_path": str(self.config_path),
+            "state_dir": str(self.state_dir),
+            "log_dir": str(self.log_dir),
             "dashboard_url": f"http://{self.config['app'].get('dashboard_host', '127.0.0.1')}:{self.config['app'].get('dashboard_port', 8765)}",
         }
         self.pid_file.write_text(str(os.getpid()), encoding="utf-8")
@@ -1186,6 +1280,12 @@ class AgentRuntime:
                     }
                 )
                 self.store.update_idea(idea["id"], status="blocked", agent_notes="Missing WorldQuant credentials")
+                self.store.add_event(
+                    level="warning",
+                    kind="engineer",
+                    message=f"idea {idea['id']} blocked because WorldQuant credentials are missing",
+                    payload={"idea_id": idea["id"], "idea_title": idea["title"]},
+                )
                 results.append(experiment_id)
                 continue
 
@@ -1228,6 +1328,12 @@ class AgentRuntime:
                 idea["id"],
                 status=idea_status,
                 agent_notes=f"generated {len(records)} alpha candidates",
+            )
+            self.store.add_event(
+                level="info",
+                kind="engineer",
+                message=f"engineered {len(records)} candidates for idea {idea['id']}",
+                payload={"idea_id": idea["id"], "idea_title": idea["title"], "idea_status": idea_status},
             )
 
         self.store.add_event(
@@ -1293,6 +1399,7 @@ class AgentRuntime:
         accepted = 0
         submitted = 0
         for experiment in experiments:
+            final_status = "accepted"
             summary = (
                 f"*Accepted alpha*\n"
                 f"Idea: {experiment['idea_title']}\n"
@@ -1311,6 +1418,7 @@ class AgentRuntime:
                 )
                 if success:
                     submitted += 1
+                    final_status = "submitted"
                     summary += "\nStatus: submitted to WorldQuant"
                 else:
                     summary += "\nStatus: accepted, submit failed"
@@ -1323,6 +1431,12 @@ class AgentRuntime:
                 summary += "\nStatus: accepted without submit"
             self.store.update_idea(experiment["idea_id"], status="accepted", agent_notes="reviewer accepted candidate")
             self.notifier.send(summary)
+            self.store.add_event(
+                level="info",
+                kind="reviewer",
+                message=f"reviewed experiment {experiment['id']} with status {final_status}",
+                payload={"experiment_id": experiment["id"], "idea_id": experiment["idea_id"], "alpha_name": experiment.get("alpha_name")},
+            )
             accepted += 1
 
         self.store.add_event(
@@ -1423,10 +1537,15 @@ def runtime_status(config_path: Path) -> Dict[str, Any]:
             pid = int(runtime.pid_file.read_text(encoding="utf-8").strip())
         except ValueError:
             pid = None
+    summary = runtime.store.summary()
     return {
+        "config_path": str(config_path),
+        "state_dir": str(runtime.state_dir),
+        "log_dir": str(runtime.log_dir),
         "running": bool(pid and is_process_alive(pid)),
         "pid": pid,
         "dashboard_url": f"http://{runtime.config['app'].get('dashboard_host', '127.0.0.1')}:{runtime.config['app'].get('dashboard_port', 8765)}",
-        "summary": runtime.store.summary(),
+        "summary": summary,
+        "feedback": runtime.store.list_feedback(limit=5),
         "recent_events": runtime.store.list_recent_events(limit=5),
     }

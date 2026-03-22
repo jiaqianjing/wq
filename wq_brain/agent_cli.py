@@ -23,6 +23,14 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 DEFAULT_CONFIG_PATH = Path(".wqa/config.yaml")
 
 
+def ensure_config_exists(config_path: Path) -> None:
+    if config_path.exists():
+        return
+    raise SystemExit(
+        f"Config not found: {config_path}\nRun `uv run wqa --config {config_path} init` first."
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="wqa",
@@ -57,23 +65,28 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     if args.command == "start":
+        ensure_config_exists(config_path)
         print(json.dumps(start_runtime(config_path), ensure_ascii=False, indent=2))
         return
 
     if args.command == "stop":
+        ensure_config_exists(config_path)
         print(json.dumps(stop_runtime(config_path), ensure_ascii=False, indent=2))
         return
 
     if args.command == "status":
+        ensure_config_exists(config_path)
         print(json.dumps(runtime_status(config_path), ensure_ascii=False, indent=2))
         return
 
     if args.command == "restart":
+        ensure_config_exists(config_path)
         print(json.dumps(stop_runtime(config_path), ensure_ascii=False, indent=2))
         print(json.dumps(start_runtime(config_path), ensure_ascii=False, indent=2))
         return
 
     if args.command == "run-daemon":
+        ensure_config_exists(config_path)
         runtime = AgentRuntime(config_path)
         runtime.run_foreground()
         return

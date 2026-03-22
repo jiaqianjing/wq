@@ -504,7 +504,7 @@ wheels = [
 ]
 
 [[package]]
-name = "wq-brain-automation"
+name = "wqa"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
