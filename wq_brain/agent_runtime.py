@@ -987,6 +987,10 @@ def render_dashboard_html() -> str:
       <h2>Best Result</h2>
       <div id="best">Loading...</div>
     </section>
+    <section class="card">
+      <h2>Live Progress</h2>
+      <div id="progress">Loading...</div>
+    </section>
   </div>
   <div class="grid" style="margin-top:16px;">
     <section class="card">
@@ -996,6 +1000,10 @@ def render_dashboard_html() -> str:
     <section class="card">
       <h2>Experiments</h2>
       <div id="experiments">Loading...</div>
+    </section>
+    <section class="card">
+      <h2>Recent Queue Adds</h2>
+      <div id="recentIdeas">Loading...</div>
     </section>
   </div>
   <section class="card" style="margin-top:16px;">
@@ -1019,6 +1027,10 @@ function renderSummary(summary) {
   for (const [key, value] of Object.entries(counts)) {
     lines.push(`<div class="stat"><span>${key}</span><strong>${value}</strong></div>`);
   }
+  if (summary.idea_status) {
+    lines.push(`<div class="stat"><span>queued</span><strong>${summary.idea_status.queued || 0}</strong></div>`);
+    lines.push(`<div class="stat"><span>engineering</span><strong>${summary.idea_status.engineering || 0}</strong></div>`);
+  }
   if ((summary.latest_accept || {}).idea_title) {
     lines.push(`<div class="stat"><span>latest accept</span><strong>${summary.latest_accept.idea_title}</strong></div>`);
   }
@@ -1030,6 +1042,13 @@ function renderAgents(items) {
     `<div class="stat"><div><strong>${item.agent_name}</strong><span class="pill">${item.state}</span><div>${item.summary || ""}</div></div><div class="mono">${item.last_heartbeat || ""}</div></div>`
   )).join("");
   document.querySelector("#agents").innerHTML = html || "<div>No agent heartbeat yet</div>";
+}
+
+function renderProgress(items) {
+  const html = (items || []).map(item => (
+    `<div class="stat"><div><strong>${item.agent_name}</strong><div>${item.summary || ""}</div></div><div><span class="pill">${item.state}</span></div></div>`
+  )).join("");
+  document.querySelector("#progress").innerHTML = html || "<div>No active progress</div>";
 }
 
 function renderBest(item) {
@@ -1048,9 +1067,16 @@ function renderBest(item) {
 
 function renderIdeas(items) {
   const rows = (items || []).map(item => (
-    `<tr><td><strong>${item.title}</strong><div>${item.summary}</div></td><td>${item.status}</td><td>${item.priority}</td></tr>`
+    `<tr><td><strong>${item.title}</strong><div>${item.summary}</div><div class="mono">${item.source_kind || ""}</div></td><td>${item.status}</td><td>${item.priority}</td></tr>`
   )).join("");
   document.querySelector("#ideas").innerHTML = `<table><thead><tr><th>Idea</th><th>Status</th><th>P</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function renderRecentIdeas(items) {
+  const rows = (items || []).slice(0, 6).map(item => (
+    `<div class="stat"><div><strong>${item.title}</strong><div>${item.source_title || item.source_kind || ""}</div></div><div class="mono">${item.created_at || ""}</div></div>`
+  )).join("");
+  document.querySelector("#recentIdeas").innerHTML = rows || "<div>No recent queue additions</div>";
 }
 
 function renderExperiments(items) {
@@ -1084,8 +1110,10 @@ async function refresh() {
   ]);
   renderSummary(summary);
   renderAgents(summary.agents || []);
+  renderProgress(summary.agents || []);
   renderBest(summary.best_experiment);
   renderIdeas(ideas);
+  renderRecentIdeas(ideas);
   renderExperiments(experiments);
   renderFeedback(feedback);
   renderEvents(events);
@@ -1233,6 +1261,7 @@ class AgentRuntime:
         return max(interval_seconds - int(elapsed), 1)
 
     def run_researcher_cycle(self) -> str:
+        self.store.set_agent_status("researcher", "running", "collecting sources")
         items = self.collector.collect()
         inserted = self.store.add_source_items(items)
         recent_sources = self.store.recent_sources(limit=8)
@@ -1244,8 +1273,16 @@ class AgentRuntime:
         batch_size = int(
             self.config.get("agents", {}).get("researcher", {}).get("idea_batch_size", 4)
         )
+        self.store.set_agent_status("researcher", "running", f"generating ideas from {len(recent_sources)} sources")
         ideas = self._generate_research_ideas(provider, recent_sources, recent_experiments, batch_size)
         inserted_ideas = self.store.add_ideas(ideas)
+        for idea in ideas[:inserted_ideas]:
+            self.store.add_event(
+                level="info",
+                kind="idea_queue",
+                message=f"queued idea: {idea['title']}",
+                payload={"title": idea["title"], "source_title": idea.get("source_title"), "source_kind": idea.get("source_kind")},
+            )
         self.store.add_event(
             level="info",
             kind="researcher",
@@ -1352,7 +1389,12 @@ class AgentRuntime:
 
         criteria = self._criteria()
         results = []
-        for idea in claimed_ideas:
+        for index, idea in enumerate(claimed_ideas, start=1):
+            self.store.set_agent_status(
+                "engineer",
+                "running",
+                f"idea {index}/{len(claimed_ideas)}: {idea['title'][:64]}",
+            )
             alpha_candidates = self._generate_engineering_candidates(provider, idea, alpha_batch_size)
             if client is None:
                 experiment_id = self.store.create_experiment(
@@ -1382,6 +1424,11 @@ class AgentRuntime:
             )
             region = Region(self.config["integrations"]["worldquant"].get("region", "USA"))
             universe = Unviverse(self.config["integrations"]["worldquant"].get("universe", "TOP3000"))
+            self.store.set_agent_status(
+                "engineer",
+                "running",
+                f"simulating {len(alpha_candidates)} alphas for idea {index}/{len(claimed_ideas)}",
+            )
             records = submitter.simulate_and_submit(
                 alphas=alpha_candidates,
                 region=region,
@@ -1483,7 +1530,12 @@ class AgentRuntime:
         auto_submit = bool(self.config.get("integrations", {}).get("worldquant", {}).get("auto_submit", True))
         accepted = 0
         submitted = 0
-        for experiment in experiments:
+        for index, experiment in enumerate(experiments, start=1):
+            self.store.set_agent_status(
+                "reviewer",
+                "running",
+                f"reviewing experiment {index}/{len(experiments)}: {experiment.get('alpha_name') or experiment['idea_title'][:48]}",
+            )
             final_status = "accepted"
             summary = (
                 f"*Accepted alpha*\n"
