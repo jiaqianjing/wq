@@ -13,6 +13,7 @@ import subprocess
 import sys
 import threading
 import time
+import copy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -143,13 +144,35 @@ class SourceItem:
 class RuntimeStore:
     def __init__(self, db_path: Path):
         self.db_path = db_path
+        self._cache_lock = threading.Lock()
+        self._cache: Dict[str, Any] = {}
         ensure_directory(db_path.parent)
         self._init_db()
+        self._refresh_cache()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=1.0)
         conn.row_factory = sqlite3.Row
         return conn
+
+    def _refresh_cache(self) -> None:
+        summary = self._summary_from_db()
+        ideas = self._recent_ideas_from_db(limit=20)
+        experiments = self._recent_experiments_from_db(limit=20)
+        events = self._recent_events_from_db(limit=40)
+        feedback = self._feedback_from_db(limit=12)
+        with self._cache_lock:
+            self._cache = {
+                "summary": summary,
+                "ideas": ideas,
+                "experiments": experiments,
+                "events": events,
+                "feedback": feedback,
+            }
+
+    def _cached(self, key: str) -> Any:
+        with self._cache_lock:
+            return copy.deepcopy(self._cache.get(key))
 
     def _init_db(self) -> None:
         conn = self._connect()
@@ -225,6 +248,7 @@ class RuntimeStore:
         )
         conn.commit()
         conn.close()
+        self._refresh_cache()
 
     def add_source_items(self, items: Iterable[SourceItem]) -> int:
         conn = self._connect()
@@ -252,6 +276,7 @@ class RuntimeStore:
                 continue
         conn.commit()
         conn.close()
+        self._refresh_cache()
         return inserted
 
     def recent_sources(self, limit: int = 12) -> List[Dict[str, Any]]:
@@ -304,6 +329,7 @@ class RuntimeStore:
             inserted += 1
         conn.commit()
         conn.close()
+        self._refresh_cache()
         return inserted
 
     def claim_ideas(self, limit: int) -> List[Dict[str, Any]]:
@@ -328,6 +354,7 @@ class RuntimeStore:
             claimed.append(dict(row))
         conn.commit()
         conn.close()
+        self._refresh_cache()
         return claimed
 
     def update_idea(
@@ -348,6 +375,7 @@ class RuntimeStore:
         )
         conn.commit()
         conn.close()
+        self._refresh_cache()
 
     def create_experiment(self, payload: Dict[str, Any]) -> int:
         conn = self._connect()
@@ -382,6 +410,7 @@ class RuntimeStore:
         experiment_id = int(cur.lastrowid)
         conn.commit()
         conn.close()
+        self._refresh_cache()
         return experiment_id
 
     def update_experiment(self, experiment_id: int, **updates: Any) -> None:
@@ -402,6 +431,7 @@ class RuntimeStore:
         )
         conn.commit()
         conn.close()
+        self._refresh_cache()
 
     def claim_promising_experiments(self, limit: int) -> List[Dict[str, Any]]:
         conn = self._connect()
@@ -427,6 +457,7 @@ class RuntimeStore:
             claimed.append(dict(row))
         conn.commit()
         conn.close()
+        self._refresh_cache()
         return claimed
 
     def add_event(
@@ -447,6 +478,7 @@ class RuntimeStore:
         )
         conn.commit()
         conn.close()
+        self._refresh_cache()
 
     def set_agent_status(self, agent_name: str, state: str, summary: str) -> None:
         now = utc_now()
@@ -465,8 +497,15 @@ class RuntimeStore:
         )
         conn.commit()
         conn.close()
+        self._refresh_cache()
 
     def list_agent_status(self) -> List[Dict[str, Any]]:
+        cached = self._cached("summary")
+        if cached:
+            return cached.get("agents", [])
+        return self._agent_status_from_db()
+
+    def _agent_status_from_db(self) -> List[Dict[str, Any]]:
         conn = self._connect()
         rows = conn.execute(
             "SELECT * FROM agent_status ORDER BY agent_name ASC"
@@ -475,6 +514,12 @@ class RuntimeStore:
         return [dict(row) for row in rows]
 
     def list_recent_ideas(self, limit: int = 20) -> List[Dict[str, Any]]:
+        cached = self._cached("ideas")
+        if cached is not None:
+            return cached[:limit]
+        return self._recent_ideas_from_db(limit)
+
+    def _recent_ideas_from_db(self, limit: int = 20) -> List[Dict[str, Any]]:
         conn = self._connect()
         rows = conn.execute(
             "SELECT * FROM ideas ORDER BY updated_at DESC LIMIT ?",
@@ -484,6 +529,12 @@ class RuntimeStore:
         return [dict(row) for row in rows]
 
     def list_recent_experiments(self, limit: int = 20) -> List[Dict[str, Any]]:
+        cached = self._cached("experiments")
+        if cached is not None:
+            return cached[:limit]
+        return self._recent_experiments_from_db(limit)
+
+    def _recent_experiments_from_db(self, limit: int = 20) -> List[Dict[str, Any]]:
         conn = self._connect()
         rows = conn.execute(
             """
@@ -499,6 +550,12 @@ class RuntimeStore:
         return [dict(row) for row in rows]
 
     def list_recent_events(self, limit: int = 40) -> List[Dict[str, Any]]:
+        cached = self._cached("events")
+        if cached is not None:
+            return cached[:limit]
+        return self._recent_events_from_db(limit)
+
+    def _recent_events_from_db(self, limit: int = 40) -> List[Dict[str, Any]]:
         conn = self._connect()
         rows = conn.execute(
             "SELECT * FROM events ORDER BY created_at DESC LIMIT ?",
@@ -508,6 +565,12 @@ class RuntimeStore:
         return [dict(row) for row in rows]
 
     def list_feedback(self, limit: int = 12) -> List[Dict[str, Any]]:
+        cached = self._cached("feedback")
+        if cached is not None:
+            return cached[:limit]
+        return self._feedback_from_db(limit)
+
+    def _feedback_from_db(self, limit: int = 12) -> List[Dict[str, Any]]:
         conn = self._connect()
         rows = conn.execute(
             """
@@ -524,6 +587,12 @@ class RuntimeStore:
         return [dict(row) for row in rows]
 
     def summary(self) -> Dict[str, Any]:
+        cached = self._cached("summary")
+        if cached:
+            return cached
+        return self._summary_from_db()
+
+    def _summary_from_db(self) -> Dict[str, Any]:
         conn = self._connect()
         counts = {}
         for table in ("sources", "ideas", "experiments", "events"):
@@ -567,7 +636,7 @@ class RuntimeStore:
             "counts": counts,
             "idea_status": idea_status,
             "experiment_status": experiment_status,
-            "agents": self.list_agent_status(),
+            "agents": self._agent_status_from_db(),
             "best_experiment": best_experiment,
             "latest_accept": latest_accept,
         }
