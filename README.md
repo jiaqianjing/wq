@@ -1,80 +1,118 @@
 # WQA
 
-`wqa` 是这个项目唯一保留的用户入口。
+WQA is a lightweight multi-agent runtime for WorldQuant-style quantitative research automation.
 
-它会启动一个尽量简单的多 agent 量化研究运行时：
+## Background
 
-- `researcher` 抓最新论文 / 研报 / 市场 feed，结合历史回测结果生成 ideas
-- `engineer` 消费 ideas，生成 alpha，并调用 WorldQuant 做模拟回测
-- `reviewer` 验收 promising alpha，提交到 WorldQuant，并通过 Telegram 发送通知
-- 后台自动启动本地 dashboard，展示 ideas、experiments、feedback 和 agent 状态
+Systematic alpha research usually breaks down into a repetitive loop:
 
-## 安装
+1. Read new papers, market commentary, and research notes.
+2. Turn those signals into concrete alpha ideas.
+3. Implement and backtest the ideas.
+4. Keep only the ideas that survive objective evaluation.
+5. Record the results so the next round improves instead of starting from zero.
+
+Most teams handle that loop with a mix of ad hoc scripts, notebooks, spreadsheets, and manual review. That works for exploration, but it becomes hard to scale, hard to observe, and hard to iterate consistently.
+
+WQA packages that workflow into a small agent system with one operational entrypoint: `wqa`.
+
+## What The Project Does
+
+WQA runs three cooperating agents:
+
+- `researcher`: collects fresh external inputs such as papers or feeds, then converts them into actionable alpha ideas.
+- `engineer`: consumes queued ideas, generates candidate alpha expressions, and sends them through WorldQuant simulation.
+- `reviewer`: evaluates promising candidates, submits acceptable alphas to WorldQuant, and can notify through Telegram.
+
+The system also keeps a lightweight feedback loop:
+
+- research ideas are stored in a queue
+- experiments and backtest results are recorded
+- accepted and rejected attempts remain visible
+- historical performance influences later idea implementation
+
+## Core Features
+
+- Multi-agent workflow for research, implementation, and review
+- Single command-line entrypoint: `wqa`
+- Background daemon mode for continuous execution
+- Built-in local dashboard for queue, experiment, and agent monitoring
+- Configurable LLM backends per agent
+- WorldQuant simulation and submission integration
+- Telegram notification support
+- Experiment persistence with SQLite
+- Basic learning loop from previous alpha outcomes
+
+## Architecture
+
+The runtime is intentionally small and centered on a few modules:
+
+- `wq_brain/agent_cli.py`: command-line entrypoint
+- `wq_brain/agent_runtime.py`: daemon, dashboard, queue orchestration, and agent loops
+- `wq_brain/client.py`: WorldQuant API client
+- `wq_brain/alpha_generator.py`: alpha candidate generation
+- `wq_brain/alpha_submitter.py`: simulation and submission workflow
+- `wq_brain/learning.py`: lightweight result history and template weighting
+
+## Operational Model
+
+After startup, WQA:
+
+1. loads runtime configuration from `.wqa/config.yaml`
+2. starts a background daemon
+3. launches a local dashboard
+4. runs the researcher, engineer, and reviewer loops continuously
+5. stores state in `.wqa/`
+
+The local dashboard is available by default at:
+
+[http://127.0.0.1:8765](http://127.0.0.1:8765)
+
+## Quick Start
+
+Install the project:
 
 ```bash
 uv pip install -e .
 ```
 
-## 唯一命令
+Initialize configuration:
 
 ```bash
 uv run wqa init
+```
+
+Then edit [`.wqa/config.yaml`](/Users/jiaqianjing/workspace/quant/wq/.wqa/config.yaml) and provide:
+
+- WorldQuant credentials
+- at least one LLM provider configuration
+- optional Telegram bot settings
+
+Run the system:
+
+```bash
 uv run wqa start
 uv run wqa status
+```
+
+Stop or restart it:
+
+```bash
 uv run wqa stop
 uv run wqa restart
 ```
 
-## 初始化
+## Why It Exists
 
-```bash
-uv run wqa init
-```
+The goal of WQA is not to replace quantitative judgment. The goal is to make the research loop more structured, more observable, and easier to repeat:
 
-这会生成 [`.wqa/config.yaml`](/Users/jiaqianjing/workspace/quant/wq/.wqa/config.yaml)。
+- fewer one-off scripts
+- clearer ownership between research and execution
+- faster iteration on ideas
+- a persistent record of what worked and what failed
 
-你只需要关心这些配置：
+## Repository Contents
 
-- `integrations.worldquant.username`
-- `integrations.worldquant.password`
-- `providers.gemini.model_name`
-- `providers.gemini.api_key`
-- `providers.kimi.model_name`
-- `providers.kimi.api_key`
-- `integrations.telegram.bot_token`
-- `integrations.telegram.chat_id`
-
-## 运行后会得到什么
-
-- 一个后台 daemon
-- 一个本地 dashboard，默认地址是 `http://127.0.0.1:8765`
-- 一个运行目录 `.wqa/`
-
-`.wqa/` 里主要有：
-
-- `runtime.db`: ideas / experiments / events / agent heartbeat
-- `alpha_history.db`: 回测学习记录
-- `submission_checks.jsonl`: submission 检查日志
-- `logs/`: daemon 日志
-
-## 项目结构
-
-```text
-wq_brain/
-  agent_cli.py
-  agent_runtime.py
-  client.py
-  alpha_generator.py
-  alpha_submitter.py
-  learning.py
-docs/
-  agent_lab.md
-tests/
-  test_wqa_runtime.py
-```
-
-## 说明
-
-- 不再保留旧的 `main.py` / `smart_generate.py` / `wq-brain` 兼容入口
-- 如果没有配置 LLM 或 WorldQuant 凭证，系统会自动降级到 fallback 流程，并把无法执行的实验标成 `blocked`
-- Idea 入队会按 `title + source_url` 去重，避免重复 source 让队列失控
+- [`docs/agent_lab.md`](/Users/jiaqianjing/workspace/quant/wq/docs/agent_lab.md): operational notes
+- [`tests/test_wqa_runtime.py`](/Users/jiaqianjing/workspace/quant/wq/tests/test_wqa_runtime.py): runtime smoke tests
+- [`results/README.md`](/Users/jiaqianjing/workspace/quant/wq/results/README.md): notes about generated runtime artifacts
