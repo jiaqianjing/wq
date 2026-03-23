@@ -7,7 +7,7 @@
 - `researcher` agent 自动拉取最新论文、研报、市场 RSS/Atom 源，结合历史回测结果生成 idea 队列。
 - `engineer` agent 消费 idea，生成 Alpha 表达式并调用现有 WorldQuant 模拟流程做回测。
 - `reviewer` agent 验收 promising alpha，在满足条件时自动提交到 WorldQuant，并通过 Telegram 发送通知。
-- 后台自动启动 dashboard，展示 ideas、experiments、agent heartbeat 和事件日志。
+- 后台自动启动 dashboard，展示 ideas、experiments、agent heartbeat、事件日志、实验图表、researcher 反思轨迹，以及脱敏后的配置快照与日志尾部。
 
 ## 命令
 
@@ -63,6 +63,8 @@ http://127.0.0.1:8765
 - experiment 列表
 - feedback loop 面板
 - event log
+- config snapshot（敏感字段脱敏）
+- recent log tail
 
 ## 当前实现边界
 

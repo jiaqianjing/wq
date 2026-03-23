@@ -1,6 +1,12 @@
 from pathlib import Path
 
-from wq_brain.agent_runtime import RuntimeStore, init_runtime_config, runtime_status
+from wq_brain.agent_runtime import (
+    RuntimeStore,
+    init_runtime_config,
+    read_config_snapshot,
+    read_log_tail,
+    runtime_status,
+)
 
 
 def test_init_runtime_config_uses_parent_directory(tmp_path: Path) -> None:
@@ -39,3 +45,55 @@ def test_runtime_status_reports_paths(tmp_path: Path) -> None:
     assert status["config_path"].endswith("config.yaml")
     assert status["state_dir"].endswith(".wqa-smoke")
     assert "summary" in status
+
+
+def test_read_config_snapshot_redacts_sensitive_fields(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+providers:
+  gemini:
+    api_key: super-secret-key
+integrations:
+  worldquant:
+    username: demo-user
+    password: demo-password
+  telegram:
+    bot_token: telegram-secret
+    chat_id: "123456"
+        """.strip(),
+        encoding="utf-8",
+    )
+    snapshot = read_config_snapshot(config_path)
+    assert snapshot["providers"]["gemini"]["api_key"] == "su***ey"
+    assert snapshot["integrations"]["worldquant"]["username"] == "demo-user"
+    assert snapshot["integrations"]["worldquant"]["password"] == "de***rd"
+    assert snapshot["integrations"]["telegram"]["bot_token"] == "te***et"
+    assert snapshot["integrations"]["telegram"]["chat_id"] == "***"
+
+
+def test_read_log_tail_returns_recent_lines(tmp_path: Path) -> None:
+    log_path = tmp_path / "wqa.err.log"
+    log_path.write_text("one\ntwo\nthree\n", encoding="utf-8")
+    assert read_log_tail(log_path, lines=2) == "two\nthree"
+
+
+def test_runtime_store_lists_recent_reflections(tmp_path: Path) -> None:
+    store = RuntimeStore(tmp_path / "runtime.db")
+    store.add_event(
+        level="info",
+        kind="researcher_reflection",
+        message="reflection headline",
+        payload={
+            "improvement_directions": ["reduce turnover"],
+            "discarded_motifs": [{"motif": "mean_reversion", "reason": "weak Sharpe"}],
+            "adjustment_map": [{"observation": "weak Sharpe", "response": "simplify expression"}],
+            "queued_idea_lineage": [{"idea_title": "idea-a", "parent_alpha": "mean_reversion"}],
+        },
+    )
+    reflections = store.list_recent_reflections()
+    assert len(reflections) == 1
+    assert reflections[0]["message"] == "reflection headline"
+    assert reflections[0]["payload"]["improvement_directions"] == ["reduce turnover"]
+    assert reflections[0]["payload"]["discarded_motifs"][0]["motif"] == "mean_reversion"
+    assert reflections[0]["payload"]["queued_idea_lineage"][0]["idea_title"] == "idea-a"

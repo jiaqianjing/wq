@@ -36,7 +36,7 @@ The system also keeps a lightweight feedback loop:
 - Multi-agent workflow for research, implementation, and review
 - Single command-line entrypoint: `wqa`
 - Background daemon mode for continuous execution
-- Built-in local dashboard for queue, experiment, and agent monitoring
+- Built-in local dashboard for queue, experiment, agent monitoring, charts, researcher reflection traces, masked config snapshot, and recent log tail
 - Configurable LLM backends per agent
 - WorldQuant simulation and submission integration
 - Telegram notification support
