@@ -403,10 +403,10 @@ function renderReflections(items){
   $("#reflections").innerHTML=h;
 }
 
-function renderErrorBanner(events){
-  const errors=(events||[]).filter(e=>(e.level||"").toLowerCase()==="error").slice(0,3);
-  if(!errors.length){$("#errorBanner").innerHTML="";return}
-  $("#errorBanner").innerHTML=errors.map(e=>`<div class="error-banner"><span class="eb-icon">⚠</span><div class="eb-body"><div class="eb-title">${esc(e.kind)} error</div><div class="eb-msg">${esc(e.message)}</div><div class="eb-time">${esc(e.created_at||"")}</div></div></div>`).join("");
+function renderErrorBanner(agents){
+  const errs=(agents||[]).filter(a=>(a.status||"").toLowerCase()==="error");
+  if(!errs.length){$("#errorBanner").innerHTML="";return}
+  $("#errorBanner").innerHTML=errs.map(a=>`<div class="error-banner"><span class="eb-icon">⚠</span><div class="eb-body"><div class="eb-title">${esc(a.agent_name)} error</div><div class="eb-msg">${esc(a.message)}</div><div class="eb-time">${esc(a.updated_at||"")}</div></div></div>`).join("");
 }
 
 // Navigation
@@ -420,7 +420,7 @@ document.addEventListener("click",e=>{
 function render(){
   const{summary:s,ideas:i,experiments:ex,feedback:fb,events:ev,reflections:rf,config:cf,logs:lg}=_data;
   if(s){renderStats(s);renderMix(s);renderAgents(s.agents||[]);renderBest(s.best_experiment)}
-  renderTrend(ex);renderIdeas(i);renderExperiments(ex);renderFeedback(fb);renderEvents(ev);renderReflections(rf);renderErrorBanner(ev);
+  renderTrend(ex);renderIdeas(i);renderExperiments(ex);renderFeedback(fb);renderEvents(ev);renderReflections(rf);renderErrorBanner(s?s.agents:[]);
   if(cf)$("#configView").textContent=JSON.stringify(cf,null,2);
   if(lg)$("#logView").textContent=(lg||{}).tail||"No log lines";
 }

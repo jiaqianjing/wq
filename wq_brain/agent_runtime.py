@@ -331,6 +331,14 @@ class RuntimeStore:
         conn.close()
         return [dict(row) for row in rows]
 
+    @staticmethod
+    def _safe_priority(value: Any) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            mapping = {"low": 25, "medium": 50, "high": 75, "critical": 90}
+            return mapping.get(str(value).strip().lower(), 50)
+
     def add_ideas(self, ideas: List[Dict[str, Any]]) -> int:
         conn = self._connect()
         cur = conn.cursor()
@@ -782,21 +790,23 @@ class KimiProvider(BaseLLMProvider):
         self.base_url = base_url.rstrip("/")
 
     def generate(self, system_prompt: str, user_prompt: str) -> str:
+        body = {
+            "model": self.model_name,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        }
+        if "k2" not in self.model_name:
+            body["temperature"] = 0.4
         response = requests.post(
             f"{self.base_url}/chat/completions",
             headers={
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
             },
-            json={
-                "model": self.model_name,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                "temperature": 0.4,
-            },
-            timeout=60,
+            json=body,
+            timeout=180,
         )
         response.raise_for_status()
         payload = response.json()
