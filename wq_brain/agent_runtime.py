@@ -749,16 +749,24 @@ class GeminiProvider(BaseLLMProvider):
         self.api_key = api_key
 
     def generate(self, system_prompt: str, user_prompt: str) -> str:
-        response = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/{quote(self.model_name)}:generateContent",
-            headers={"x-goog-api-key": self.api_key, "Content-Type": "application/json"},
-            json={
-                "system_instruction": {"parts": [{"text": system_prompt}]},
-                "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
-            },
-            timeout=60,
-        )
-        response.raise_for_status()
+        max_retries = 3
+        for attempt in range(max_retries):
+            response = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{quote(self.model_name)}:generateContent",
+                headers={"x-goog-api-key": self.api_key, "Content-Type": "application/json"},
+                json={
+                    "system_instruction": {"parts": [{"text": system_prompt}]},
+                    "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
+                },
+                timeout=120,
+            )
+            if response.status_code == 429 and attempt < max_retries - 1:
+                wait = 2 ** (attempt + 1) * 15  # 30s, 60s
+                logger.warning("Gemini 429 rate limited, retrying in %ds (attempt %d/%d)", wait, attempt + 1, max_retries)
+                time.sleep(wait)
+                continue
+            response.raise_for_status()
+            break
         payload = response.json()
         candidates = payload.get("candidates", [])
         if not candidates:

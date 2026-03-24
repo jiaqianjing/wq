@@ -106,8 +106,8 @@ class WorldQuantBrainClient:
     """WorldQuant Brain API 客户端"""
 
     BASE_URL = "https://api.worldquantbrain.com"
-    DEFAULT_SIMULATION_MAX_WAIT = 120
-    DEFAULT_SIMULATION_RETRY_WAIT = 60
+    DEFAULT_SIMULATION_MAX_WAIT = 300
+    DEFAULT_SIMULATION_RETRY_WAIT = 120
     DEFAULT_CHECK_MAX_WAIT = 180
 
     def __init__(self, username: str, password: str):

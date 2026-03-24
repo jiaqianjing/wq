@@ -349,8 +349,8 @@ function renderIdeas(items){
 function renderExperiments(items){
   const list=items||[],vis=paged("experiments",list);
   if(!list.length){$("#experiments").innerHTML=`<div class="empty">No experiments yet</div>`;return}
-  let h=`<table class="tbl"><thead><tr><th>Idea</th><th>Alpha</th><th>Sharpe</th><th>Fitness</th><th>Turnover</th><th>Status</th></tr></thead><tbody>`;
-  vis.forEach(e=>{h+=`<tr><td>${esc(e.idea_title||"-")}</td><td class="mono small">${esc(e.alpha_name||"-")}</td><td>${esc(e.sharpe??"-")}</td><td>${esc(e.fitness??"-")}</td><td>${esc(e.turnover??"-")}</td><td>${chip(e.status)}</td></tr>`});
+  let h=`<table class="tbl"><thead><tr><th>Idea</th><th>Alpha</th><th>Expression</th><th>Sharpe</th><th>Fitness</th><th>Turnover</th><th>Status</th></tr></thead><tbody>`;
+  vis.forEach(e=>{h+=`<tr><td>${esc(e.idea_title||"-")}</td><td class="mono small">${esc(e.alpha_name||"-")}</td><td class="mono small" style="max-width:320px;word-break:break-all">${esc(e.alpha_expression||"-")}</td><td>${esc(e.sharpe??"-")}</td><td>${esc(e.fitness??"-")}</td><td>${esc(e.turnover??"-")}</td><td>${chip(e.status)}</td></tr>`});
   h+=`</tbody></table>${pager("experiments",list.length)}`;
   $("#experiments").innerHTML=h;
   $("#experimentCount").textContent=list.length;
