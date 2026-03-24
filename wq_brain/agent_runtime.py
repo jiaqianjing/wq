@@ -343,14 +343,15 @@ class RuntimeStore:
         inserted = 0
         now = utc_now()
         for idea in ideas:
+            # Deduplicate by title + summary hash to allow similar titles with different content
             existing = cur.execute(
                 """
                 SELECT id FROM ideas
-                WHERE title = ? AND COALESCE(source_url, '') = COALESCE(?, '')
+                WHERE title = ? AND summary = ?
                 ORDER BY created_at DESC
                 LIMIT 1
                 """,
-                (idea["title"], idea.get("source_url")),
+                (idea["title"], idea.get("summary", "")),
             ).fetchone()
             if existing:
                 continue
@@ -384,6 +385,12 @@ class RuntimeStore:
     def claim_ideas(self, limit: int) -> List[Dict[str, Any]]:
         conn = self._connect()
         cur = conn.cursor()
+        # Recover ideas stuck in 'engineering' for over 30 minutes
+        stale_cutoff = datetime.now(timezone.utc).replace(microsecond=0) - __import__('datetime').timedelta(minutes=30)
+        cur.execute(
+            "UPDATE ideas SET status = 'queued', updated_at = ? WHERE status = 'engineering' AND updated_at < ?",
+            (utc_now(), stale_cutoff.isoformat()),
+        )
         rows = cur.execute(
             """
             SELECT * FROM ideas
@@ -485,6 +492,12 @@ class RuntimeStore:
     def claim_promising_experiments(self, limit: int) -> List[Dict[str, Any]]:
         conn = self._connect()
         cur = conn.cursor()
+        # Recover experiments stuck in 'reviewing' for over 30 minutes
+        stale_cutoff = datetime.now(timezone.utc).replace(microsecond=0) - __import__('datetime').timedelta(minutes=30)
+        cur.execute(
+            "UPDATE experiments SET status = 'promising', updated_at = ? WHERE status = 'reviewing' AND updated_at < ?",
+            (utc_now(), stale_cutoff.isoformat()),
+        )
         rows = cur.execute(
             """
             SELECT e.*, i.title AS idea_title, i.summary AS idea_summary
@@ -992,6 +1005,43 @@ class AgentRuntime:
         self.notifier = TelegramNotifier(self.config.get("integrations", {}).get("telegram", {}))
         self.alpha_generator = AlphaGenerator()
         self.learning_db = AlphaDatabase(str(self.state_dir / "alpha_history.db"))
+        self._brain_knowledge = self._load_brain_knowledge()
+
+    def _load_brain_knowledge(self) -> Dict[str, Any]:
+        """Load curated BRAIN platform knowledge if available."""
+        kb_path = self.state_dir / "brain_knowledge.yaml"
+        if not kb_path.exists():
+            return {}
+        try:
+            return load_yaml_config(kb_path)
+        except Exception:
+            return {}
+
+    def _brain_knowledge_prompt(self, section: str) -> str:
+        """Format a knowledge section for prompt injection."""
+        data = self._brain_knowledge.get(section)
+        if not data:
+            return ""
+        if isinstance(data, list):
+            lines = []
+            for item in data[:8]:
+                if isinstance(item, dict):
+                    lines.append(
+                        f"  - {item.get('expression', item.get('name', ''))}"
+                        + (f"  ({item.get('performance', '')})" if item.get('performance') else "")
+                        + (f"\n    Insight: {item['insight']}" if item.get('insight') else "")
+                    )
+                else:
+                    lines.append(f"  - {item}")
+            return "\n".join(lines)
+        if isinstance(data, dict):
+            lines = []
+            for key, values in list(data.items())[:6]:
+                if isinstance(values, list):
+                    for v in values[:3]:
+                        lines.append(f"  - [{key}] {v}")
+            return "\n".join(lines)
+        return str(data)
 
     def _worldquant_client(self) -> Optional[WorldQuantBrainClient]:
         wq_config = self.config.get("integrations", {}).get("worldquant", {})
@@ -1101,7 +1151,8 @@ class AgentRuntime:
             return max(interval_seconds - int(elapsed), 1)
 
         if summary in {"no queued ideas", "no promising experiments"}:
-            return min(15, interval_seconds)
+            # Back off to full interval instead of spinning at 15s
+            return interval_seconds
 
         return max(interval_seconds - int(elapsed), 1)
 
@@ -1298,14 +1349,77 @@ class AgentRuntime:
         batch_size: int,
     ) -> List[Dict[str, Any]]:
         sources_text = json.dumps(recent_sources[:8], ensure_ascii=False, indent=2)
-        experiments_text = json.dumps(recent_experiments[:6], ensure_ascii=False, indent=2)
+        criteria = self._criteria()
+
+        # Compact experiment digest: only fields the LLM needs
+        exp_digest = [
+            {
+                "name": e.get("alpha_name"),
+                "expr": e.get("alpha_expression"),
+                "sharpe": e.get("sharpe"),
+                "fitness": e.get("fitness"),
+                "turnover": e.get("turnover"),
+                "status": e.get("status"),
+            }
+            for e in recent_experiments[:8]
+        ]
+
+        # Inject the last reflection so the learning loop actually closes
+        last_reflection = ""
+        reflections = self.store.list_recent_reflections(limit=1)
+        if reflections:
+            payload = reflections[0].get("payload") or {}
+            parts = []
+            if payload.get("failure_patterns"):
+                parts.append(f"Failure patterns: {'; '.join(payload['failure_patterns'])}")
+            if payload.get("improvement_directions"):
+                parts.append(f"Directions: {'; '.join(payload['improvement_directions'])}")
+            if payload.get("discarded_motifs"):
+                names = [m["motif"] for m in payload["discarded_motifs"]]
+                parts.append(f"Discarded motifs (DO NOT reuse): {', '.join(names)}")
+            if parts:
+                last_reflection = "\n\nLAST CYCLE REFLECTION:\n" + "\n".join(parts)
+
+        # Inject platform knowledge
+        kb_proven = self._brain_knowledge_prompt("proven_alphas")
+        kb_tips = self._brain_knowledge_prompt("platform_tips")
+        kb_section = ""
+        if kb_proven or kb_tips:
+            parts_kb = []
+            if kb_proven:
+                parts_kb.append(f"PROVEN ALPHA PATTERNS (reference these):\n{kb_proven}")
+            if kb_tips:
+                parts_kb.append(f"PLATFORM TIPS:\n{kb_tips}")
+            kb_section = "\n\n" + "\n\n".join(parts_kb)
+
         system_prompt = (
-            "You are a quantitative researcher agent. Produce compact JSON only. "
-            "Return a list with title, summary, rationale, priority, source_kind, source_title, source_url."
+            "You are a quantitative researcher for WorldQuant BRAIN platform.\n"
+            "Your job: generate ideas that an engineer can turn into BRAIN FASTEXPR alpha expressions.\n\n"
+            "BRAIN acceptance criteria:\n"
+            f"  Sharpe >= {criteria.min_sharpe}, Fitness >= {criteria.min_fitness}, "
+            f"Turnover <= {criteria.max_turnover}, Drawdown <= {criteria.max_drawdown}\n\n"
+            "Available operators: rank, ts_corr, ts_delta, ts_mean, ts_std, ts_sum, ts_max, ts_min, "
+            "ts_returns, ts_delay, ts_rank, ts_argmax, ts_argmin, ts_product, "
+            "group_rank, group_neutralize, trade_when, ts_regression, vector_neut, "
+            "ts_decay_exp_window, signed_power, ts_quantile, abs, log, sign, power.\n"
+            "Available fields: open, high, low, close, volume, vwap, adv20, returns, cap, sharesout, "
+            "equity, enterprise_value, ebitda, operating_income, retained_earnings.\n\n"
+            "Rules:\n"
+            "- Each idea MUST include a concrete expression sketch using the operators above.\n"
+            "- Prefer 3+ nested operators; single-operator expressions always fail.\n"
+            "- Always wrap with group_neutralize(sector, ...) or rank(...) to control turnover.\n"
+            "- Use trade_when with volatility filter to reduce turnover.\n"
+            "- Combine price-volume with fundamental data for strongest signals.\n"
+            "- Explain the economic hypothesis: WHY should this signal predict returns?\n\n"
+            "Return compact JSON only: a list with title, summary, expression_sketch, rationale, "
+            "priority, source_kind, source_title, source_url."
+            f"{kb_section}"
         )
         user_prompt = (
-            f"Generate {batch_size} actionable WorldQuant alpha ideas from the following fresh sources "
-            f"and recent experiment feedback.\nSources:\n{sources_text}\nExperiments:\n{experiments_text}"
+            f"Generate {batch_size} actionable WorldQuant alpha ideas.\n\n"
+            f"Fresh sources:\n{sources_text}\n\n"
+            f"Recent experiments (learn from these):\n{json.dumps(exp_digest, ensure_ascii=False, indent=2)}"
+            f"{last_reflection}"
         )
 
         try:
@@ -1322,18 +1436,28 @@ class AgentRuntime:
         batch_size: int,
     ) -> List[Dict[str, Any]]:
         ideas = []
-        failure_hint = "Reduce turnover and favor templates with stronger recent Sharpe stability."
-        if recent_experiments:
-            promising = [item for item in recent_experiments if item.get("status") in {"promising", "submitted"}]
-            if promising:
-                failure_hint = "Extend recently promising motifs into diversified variants with different windows and neutralization."
+        # Find the best recent expression to build on
+        best = sorted(
+            [e for e in recent_experiments if (e.get("sharpe") or 0) > 0],
+            key=lambda e: e.get("sharpe", 0), reverse=True,
+        )
+        best_expr = best[0].get("alpha_expression", "") if best else ""
+        hint = (
+            f"Build on the strongest recent signal: {best_expr}. "
+            "Add group_neutralize(sector, ...) to control turnover and combine with a second factor."
+            if best_expr else
+            "Use group_neutralize(sector, rank(...)) patterns with 3+ nested operators."
+        )
         for index, source in enumerate(recent_sources[:batch_size]):
             ideas.append(
                 self._normalize_idea(
                     {
                         "title": f"{source['source_kind']} signal idea {index + 1}: {source['title'][:60]}",
-                        "summary": f"Turn {source['title']} into a cross-sectional alpha hypothesis anchored to liquidity, reversion, or momentum.",
-                        "rationale": failure_hint,
+                        "summary": (
+                            f"Derive a cross-sectional alpha from '{source['title'][:50]}'. "
+                            f"Expression sketch: group_neutralize(sector, rank(ts_corr(close, volume, 20)))."
+                        ),
+                        "rationale": hint,
                         "priority": 10 + index,
                         "source_kind": source.get("source_kind"),
                         "source_title": source.get("title"),
@@ -1345,10 +1469,10 @@ class AgentRuntime:
             ideas.append(
                 self._normalize_idea(
                     {
-                        "title": "Offline learning-driven refinement",
-                        "summary": "Generate regular alpha variants from the best historical templates and push them into the engineering queue.",
-                        "rationale": failure_hint,
-                        "priority": 25,
+                        "title": "Refinement of best historical alpha",
+                        "summary": f"Take the best recent expression and create neutralized variants. Base: {best_expr or 'rank(ts_corr(close, volume, 20))'}",
+                        "rationale": hint,
+                        "priority": 5,
                         "source_kind": "history",
                         "source_title": "local alpha history",
                         "source_url": "",
@@ -1436,6 +1560,15 @@ class AgentRuntime:
             )
             idea_status = "tested"
             for alpha_candidate, record in zip(alpha_candidates, records):
+                # Skip timed-out or errored simulations — don't record as rejected
+                sim_status = getattr(record.simulate_result, "status", "")
+                if sim_status in ("TIMEOUT", "ERROR", "FAILED") and record.simulate_result.sharpe == 0:
+                    self.store.add_event(
+                        level="warning",
+                        kind="engineer",
+                        message=f"simulation {sim_status} for {alpha_candidate.get('name', '?')}, skipping",
+                    )
+                    continue
                 meets_threshold = criteria.check(record.simulate_result)
                 experiment_id = self.store.create_experiment(
                     {
@@ -1484,26 +1617,88 @@ class AgentRuntime:
         template_weights = smart_generator.get_template_weights("regular")
         top_templates = sorted(template_weights.items(), key=lambda item: item[1], reverse=True)[:5]
 
+        # Gather recently failed expressions so the LLM avoids repeating them
+        recent_experiments = self.store.list_recent_experiments(limit=20)
+        failed_expressions = [
+            e["alpha_expression"]
+            for e in recent_experiments
+            if e.get("status") == "rejected" and e.get("alpha_expression")
+        ][:10]
+
+        # Collect best historical results as few-shot examples
+        best_examples = sorted(
+            [e for e in recent_experiments if (e.get("sharpe") or 0) > 0.5],
+            key=lambda e: e.get("sharpe", 0),
+            reverse=True,
+        )[:3]
+        best_text = ""
+        if best_examples:
+            lines = []
+            for e in best_examples:
+                lines.append(
+                    f"  - {e.get('alpha_expression')} → sharpe={e.get('sharpe')}, "
+                    f"fitness={e.get('fitness')}, turnover={e.get('turnover')}"
+                )
+            best_text = "\nBest historical expressions (learn from these):\n" + "\n".join(lines)
+
+        criteria = self._criteria()
+
+        # Inject proven patterns from knowledge base
+        kb_proven = self._brain_knowledge_prompt("proven_alphas")
+        kb_operators = self._brain_knowledge_prompt("operators_by_category") or self._brain_knowledge_prompt("advanced_operators")
+        kb_fields = self._brain_knowledge_prompt("top_data_fields")
+        kb_section = ""
+        if kb_proven:
+            kb_section += f"\n\nPROVEN PATTERNS (use as inspiration):\n{kb_proven}"
+        if kb_operators:
+            kb_section += f"\n\nALL AVAILABLE OPERATORS:\n{kb_operators}"
+        if kb_fields:
+            kb_section += f"\n\nTOP DATA FIELDS BY POPULARITY:\n{kb_fields}"
+
         system_prompt = (
-            "You are a quant implementation agent. Return JSON only. "
-            "Each item needs name, category, expression, type."
+            "You are a quant implementation agent for WorldQuant BRAIN. Return JSON only.\n"
+            "Each item needs: name, category, expression, type.\n\n"
+            "ACCEPTANCE CRITERIA (all must pass simultaneously):\n"
+            f"  Sharpe >= {criteria.min_sharpe}, Fitness >= {criteria.min_fitness}, "
+            f"Turnover <= {criteria.max_turnover}, Drawdown <= {criteria.max_drawdown}\n\n"
+            "BRAIN FASTEXPR operators: rank, ts_corr, ts_delta, ts_mean, ts_std, ts_sum, "
+            "ts_max, ts_min, ts_returns, ts_delay, ts_rank, ts_argmax, ts_argmin, ts_product, "
+            "group_rank, group_neutralize, trade_when, ts_regression, vector_neut, "
+            "ts_decay_exp_window, signed_power, ts_quantile, humpdecay, "
+            "abs, log, sign, max, min, power.\n"
+            "Available fields: open, high, low, close, volume, vwap, adv20, returns, cap, sharesout, "
+            "equity, enterprise_value, ebitda, operating_income, retained_earnings.\n\n"
+            "CRITICAL RULES:\n"
+            "- ALWAYS wrap final expression with group_neutralize(sector, ...) to control turnover.\n"
+            "- Use trade_when(volatility_condition, alpha, -1) to reduce turnover dramatically.\n"
+            "- Use 3+ nested operators; simple expressions always get rejected.\n"
+            "- Combine price-volume AND fundamental fields for stronger signals.\n"
+            "- Use ts_rank or rank for cross-sectional normalization.\n"
+            "- Use subindustry neutralization for best performance.\n"
+            "- Do NOT repeat any expression from the failed list below.\n"
+            "- Each expression must be syntactically valid FASTEXPR."
+            f"{best_text}"
+            f"{kb_section}"
         )
         user_prompt = (
-            f"Implement up to {batch_size} WorldQuant alpha expressions for this idea:\n"
+            f"Implement {batch_size} WorldQuant alpha expressions for this idea:\n"
             f"{json.dumps(idea, ensure_ascii=False, indent=2)}\n"
-            f"Recent strong template hints:\n{json.dumps(top_templates, ensure_ascii=False)}"
+            f"Recent strong template hints:\n{json.dumps(top_templates, ensure_ascii=False)}\n"
+            f"FAILED expressions (do NOT reuse):\n{json.dumps(failed_expressions, ensure_ascii=False)}"
         )
         try:
             raw = provider.generate(system_prompt, user_prompt)
             payload = json.loads(extract_json(raw))
             candidates = [self._normalize_alpha_candidate(item) for item in payload[:batch_size]]
             if candidates:
-                return candidates
+                return self._deduplicate_candidates(candidates)
         except Exception:
             pass
 
         generated = self.alpha_generator.generate_regular_alphas(batch_size, diversify=True)
-        return [self._normalize_alpha_candidate(item) for item in generated]
+        return self._deduplicate_candidates(
+            [self._normalize_alpha_candidate(item) for item in generated]
+        )
 
     def _normalize_alpha_candidate(self, item: Dict[str, Any]) -> Dict[str, Any]:
         return {
@@ -1514,19 +1709,31 @@ class AgentRuntime:
             "params": item.get("params", {}),
         }
 
+    def _deduplicate_candidates(self, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Remove candidates whose expression was already tested in recent experiments."""
+        conn = self.store._connect()
+        tested = {
+            row["alpha_expression"]
+            for row in conn.execute(
+                "SELECT DISTINCT alpha_expression FROM experiments"
+            ).fetchall()
+            if row["alpha_expression"]
+        }
+        conn.close()
+        seen: set = set()
+        result: List[Dict[str, Any]] = []
+        for c in candidates:
+            expr = c["expression"].strip()
+            if expr not in tested and expr not in seen:
+                seen.add(expr)
+                result.append(c)
+        return result if result else candidates[:1]  # keep at least one
+
     def run_reviewer_cycle(self) -> str:
         limit = int(self.config["app"].get("default_claim_limit", 3))
+
+        # Phase 1: handle promising experiments (accept / submit)
         experiments = self.store.claim_promising_experiments(limit=limit)
-        if not experiments:
-            return "no promising experiments"
-
-        client = None
-        try:
-            client = self._worldquant_client()
-        except Exception as exc:
-            self.store.add_event(level="warning", kind="reviewer", message=f"worldquant unavailable: {exc}")
-
-        auto_submit = bool(self.config.get("integrations", {}).get("worldquant", {}).get("auto_submit", True))
         accepted = 0
         submitted = 0
         for index, experiment in enumerate(experiments, start=1):
@@ -1544,6 +1751,14 @@ class AgentRuntime:
                 f"Turnover: {experiment.get('turnover')}\n"
                 f"Alpha ID: `{experiment.get('wq_alpha_id') or 'n/a'}`"
             )
+
+            client = None
+            try:
+                client = self._worldquant_client()
+            except Exception as exc:
+                self.store.add_event(level="warning", kind="reviewer", message=f"worldquant unavailable: {exc}")
+
+            auto_submit = bool(self.config.get("integrations", {}).get("worldquant", {}).get("auto_submit", True))
             if client and auto_submit and experiment.get("wq_alpha_id"):
                 success = client.submit_alpha(experiment["wq_alpha_id"])
                 self.store.update_experiment(
@@ -1575,12 +1790,144 @@ class AgentRuntime:
             )
             accepted += 1
 
+        # Phase 2: refine near-miss experiments (high sharpe but failed on turnover/fitness)
+        refined = self._refine_near_misses()
+
+        if not experiments and not refined:
+            return "no promising experiments"
+
         self.store.add_event(
             level="info",
             kind="reviewer",
-            message=f"reviewer accepted {accepted} experiments, submitted {submitted}",
+            message=f"reviewer accepted {accepted}, submitted {submitted}, refined {refined}",
         )
-        return f"accepted={accepted}, submitted={submitted}"
+        return f"accepted={accepted}, submitted={submitted}, refined={refined}"
+
+    def _refine_near_misses(self) -> int:
+        """Find rejected experiments that were close to passing and generate variants."""
+        criteria = self._criteria()
+        conn = self.store._connect()
+        near_misses = conn.execute(
+            """
+            SELECT e.*, i.title AS idea_title
+            FROM experiments e
+            JOIN ideas i ON i.id = e.idea_id
+            WHERE e.status = 'rejected'
+              AND e.sharpe >= ?
+              AND (e.turnover > ? OR e.fitness < ?)
+              AND e.id NOT IN (
+                  SELECT CAST(json_extract(payload_json, '$.parent_experiment_id') AS INTEGER)
+                  FROM events
+                  WHERE kind = 'reviewer_refinement'
+                    AND json_extract(payload_json, '$.parent_experiment_id') IS NOT NULL
+              )
+            ORDER BY e.sharpe DESC
+            LIMIT 2
+            """,
+            (criteria.min_sharpe * 0.6, criteria.max_turnover, criteria.min_fitness),
+        ).fetchall()
+        conn.close()
+
+        if not near_misses:
+            return 0
+
+        client = None
+        try:
+            client = self._worldquant_client()
+        except Exception:
+            return 0
+        if not client:
+            return 0
+
+        provider = create_llm_provider(
+            self.config,
+            self.config.get("agents", {}).get("reviewer", {}).get("llm_profile"),
+        )
+
+        refined_count = 0
+        for experiment in [dict(r) for r in near_misses]:
+            self.store.set_agent_status(
+                "reviewer", "running",
+                f"refining near-miss: {experiment.get('alpha_name', '?')} (sharpe={experiment.get('sharpe')})",
+            )
+            variants = self._generate_refinement_variants(provider, experiment, criteria)
+            if not variants:
+                continue
+
+            submitter = AlphaSubmitter(
+                client, criteria=criteria,
+                results_dir=str(self.state_dir), enable_learning=True,
+            )
+            region = Region(self.config["integrations"]["worldquant"].get("region", "USA"))
+            universe = Unviverse(self.config["integrations"]["worldquant"].get("universe", "TOP3000"))
+            records = submitter.simulate_and_submit(
+                alphas=variants, region=region, universe=universe, auto_submit=False,
+            )
+            for variant, record in zip(variants, records):
+                sim_status = getattr(record.simulate_result, "status", "")
+                if sim_status in ("TIMEOUT", "ERROR", "FAILED") and record.simulate_result.sharpe == 0:
+                    continue
+                meets = criteria.check(record.simulate_result)
+                self.store.create_experiment({
+                    "idea_id": experiment["idea_id"],
+                    "alpha_name": f"refined_{variant.get('name', 'v')}",
+                    "alpha_expression": record.expression,
+                    "implementation_notes": f"refined from experiment {experiment['id']}",
+                    "status": "promising" if meets else "rejected",
+                    "sharpe": record.simulate_result.sharpe,
+                    "fitness": record.simulate_result.fitness,
+                    "turnover": record.simulate_result.turnover,
+                    "drawdown": record.simulate_result.drawdown,
+                    "returns": record.simulate_result.returns,
+                    "wq_alpha_id": record.alpha_id,
+                })
+                refined_count += 1
+
+            self.store.add_event(
+                level="info", kind="reviewer_refinement",
+                message=f"refined experiment {experiment['id']}: generated {len(records)} variants",
+                payload={
+                    "parent_experiment_id": experiment["id"],
+                    "parent_expression": experiment.get("alpha_expression"),
+                    "parent_sharpe": experiment.get("sharpe"),
+                    "variants": len(records),
+                },
+            )
+        return refined_count
+
+    def _generate_refinement_variants(
+        self,
+        provider: BaseLLMProvider,
+        experiment: Dict[str, Any],
+        criteria: SubmissionCriteria,
+    ) -> List[Dict[str, Any]]:
+        """Ask LLM to fix a near-miss alpha expression."""
+        system_prompt = (
+            "You are a quant reviewer for WorldQuant BRAIN. "
+            "Given a near-miss alpha expression, generate 2 improved variants.\n"
+            "Return JSON only: a list with name, expression, category, type.\n\n"
+            "ACCEPTANCE CRITERIA:\n"
+            f"  Sharpe >= {criteria.min_sharpe}, Fitness >= {criteria.min_fitness}, "
+            f"Turnover <= {criteria.max_turnover}, Drawdown <= {criteria.max_drawdown}\n\n"
+            "FIX STRATEGIES:\n"
+            "- If turnover too high: wrap with group_neutralize(sector, ...), use longer ts windows, add ts_mean smoothing.\n"
+            "- If fitness too low: combine with a second uncorrelated signal, add rank() wrapper.\n"
+            "- Keep the core signal idea intact, only adjust structure."
+        )
+        user_prompt = (
+            f"Near-miss alpha to improve:\n"
+            f"  Expression: {experiment.get('alpha_expression')}\n"
+            f"  Sharpe: {experiment.get('sharpe')}, Fitness: {experiment.get('fitness')}, "
+            f"Turnover: {experiment.get('turnover')}, Drawdown: {experiment.get('drawdown')}\n"
+            f"  Problem: {'turnover too high' if (experiment.get('turnover') or 0) > criteria.max_turnover else 'fitness too low'}\n"
+            f"Generate 2 fixed variants."
+        )
+        try:
+            raw = provider.generate(system_prompt, user_prompt)
+            payload = json.loads(extract_json(raw))
+            return [self._normalize_alpha_candidate(item) for item in payload[:2]]
+        except Exception:
+            return []
 
 
 def extract_json(text: str) -> str:
@@ -1684,4 +2031,123 @@ def runtime_status(config_path: Path) -> Dict[str, Any]:
         "summary": summary,
         "feedback": runtime.store.list_feedback(limit=5),
         "recent_events": runtime.store.list_recent_events(limit=5),
+    }
+
+
+def sync_brain_knowledge(config_path: Path) -> Dict[str, Any]:
+    """Fetch operators and popular data fields from BRAIN API and update local knowledge base."""
+    config = load_yaml_config(config_path)
+    state_dir = Path(config["app"]["state_dir"]).resolve()
+    wq_config = config.get("integrations", {}).get("worldquant", {})
+    username = wq_config.get("username", "")
+    password = wq_config.get("password", "")
+    if not username or not password:
+        return {"error": "WorldQuant credentials not configured"}
+
+    client = WorldQuantBrainClient(username, password)
+    if not client.authenticate():
+        return {"error": "WorldQuant authentication failed"}
+
+    base = client.BASE_URL
+
+    # 1. Fetch all operators
+    resp = client._request("get", f"{base}/operators", timeout=30)
+    operators_raw = resp.json() if resp.status_code == 200 else []
+    operators = [
+        {
+            "name": op["name"],
+            "category": op.get("category", ""),
+            "definition": op.get("definition", ""),
+            "description": op.get("description", ""),
+            "scope": op.get("scope", []),
+        }
+        for op in operators_raw
+    ]
+
+    # 2. Fetch popular data fields across key categories
+    field_categories = ["fundamental", "model", "sentiment", "news", "option"]
+    all_fields: Dict[str, Any] = {}
+    for cat in field_categories:
+        r = client._request(
+            "get",
+            f"{base}/data-fields?instrumentType=EQUITY&region=USA&delay=1&universe=TOP3000&limit=50&category={cat}",
+            timeout=30,
+        )
+        if r.status_code == 200:
+            data = r.json()
+            for f in data.get("results", []) if isinstance(data, dict) else []:
+                all_fields[f["id"]] = f
+
+    # Also fetch default (alphabetical) pages to catch price-volume fields
+    for offset in [0, 50]:
+        r = client._request(
+            "get",
+            f"{base}/data-fields?instrumentType=EQUITY&region=USA&delay=1&universe=TOP3000&limit=50&offset={offset}",
+            timeout=30,
+        )
+        if r.status_code == 200:
+            data = r.json()
+            for f in data.get("results", []) if isinstance(data, dict) else []:
+                all_fields[f["id"]] = f
+
+    # Sort by popularity and keep top 200
+    sorted_fields = sorted(all_fields.values(), key=lambda f: f.get("alphaCount", 0), reverse=True)
+    datafields = [
+        {
+            "id": f["id"],
+            "desc": f.get("description", ""),
+            "cat": f.get("category", {}).get("name", ""),
+            "type": f.get("type", ""),
+            "alphas": f.get("alphaCount", 0),
+        }
+        for f in sorted_fields[:200]
+    ]
+
+    # 3. Save raw JSON files
+    ensure_directory(state_dir)
+    ops_path = state_dir / "brain_operators.json"
+    fields_path = state_dir / "brain_datafields.json"
+    ops_path.write_text(json.dumps(operators, indent=2, ensure_ascii=False), encoding="utf-8")
+    fields_path.write_text(json.dumps(datafields, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    # 4. Update brain_knowledge.yaml with synced data
+    kb_path = state_dir / "brain_knowledge.yaml"
+    kb: Dict[str, Any] = {}
+    if kb_path.exists():
+        try:
+            kb = load_yaml_config(kb_path)
+        except Exception:
+            kb = {}
+
+    # Build operator reference grouped by category
+    op_by_cat: Dict[str, list] = {}
+    for op in operators:
+        cat = op["category"] or "Other"
+        op_by_cat.setdefault(cat, []).append(f"{op['name']} — {op['definition']}")
+    kb["operators_by_category"] = op_by_cat
+
+    # Build top data fields reference
+    top_fields_ref = [
+        f"{f['id']} ({f['cat']}, {f['alphas']} alphas) — {f['desc'][:80]}"
+        for f in datafields[:60]
+    ]
+    kb["top_data_fields"] = top_fields_ref
+
+    if yaml is None:
+        # Fallback: write as JSON if yaml not available
+        kb_path.with_suffix(".json").write_text(
+            json.dumps(kb, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+    else:
+        kb_path.write_text(
+            yaml.dump(kb, allow_unicode=True, default_flow_style=False, sort_keys=False, width=120),
+            encoding="utf-8",
+        )
+
+    return {
+        "operators": len(operators),
+        "data_fields": len(datafields),
+        "knowledge_base": str(kb_path),
+        "operators_file": str(ops_path),
+        "datafields_file": str(fields_path),
     }

@@ -18,7 +18,8 @@ from .agent_runtime import (
     stop_runtime,
 )
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+_log_fmt = "%(asctime)s - %(levelname)s - %(name)s - %(message)s"
+logging.basicConfig(level=logging.INFO, format=_log_fmt, force=True)
 
 DEFAULT_CONFIG_PATH = Path(".wqa/config.yaml")
 
@@ -50,6 +51,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("stop", help="Stop the agent runtime")
     subparsers.add_parser("status", help="Show daemon and queue status")
     subparsers.add_parser("restart", help="Restart the runtime")
+    subparsers.add_parser("sync-knowledge", help="Sync operators and data fields from WorldQuant BRAIN into local knowledge base")
     subparsers.add_parser("run-daemon", help=argparse.SUPPRESS)
     return parser
 
@@ -83,6 +85,13 @@ def main(argv: list[str] | None = None) -> None:
         ensure_config_exists(config_path)
         print(json.dumps(stop_runtime(config_path), ensure_ascii=False, indent=2))
         print(json.dumps(start_runtime(config_path), ensure_ascii=False, indent=2))
+        return
+
+    if args.command == "sync-knowledge":
+        ensure_config_exists(config_path)
+        from .agent_runtime import sync_brain_knowledge
+        result = sync_brain_knowledge(config_path)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
         return
 
     if args.command == "run-daemon":

@@ -102,6 +102,47 @@ uv run wqa stop
 uv run wqa restart
 ```
 
+## Knowledge Base
+
+WQA maintains a local knowledge base (`.wqa/brain_knowledge.yaml`) that feeds platform-specific context into every agent prompt — proven alpha patterns, operator definitions, popular data fields, and practical tips.
+
+### Syncing from WorldQuant BRAIN
+
+Pull the latest operators and data fields directly from the BRAIN API:
+
+```bash
+uv run wqa sync-knowledge
+```
+
+This authenticates with your WorldQuant credentials and fetches:
+
+- **All platform operators** (84+) with definitions, grouped by category (Arithmetic, Time Series, Cross Sectional, Group, etc.)
+- **Top 200 data fields** ranked by community usage (`alphaCount`), covering fundamental, model, sentiment, news, and options categories
+
+The results are saved to:
+
+| File | Contents |
+|---|---|
+| `.wqa/brain_knowledge.yaml` | Merged knowledge base used by agents |
+| `.wqa/brain_operators.json` | Raw operator reference |
+| `.wqa/brain_datafields.json` | Raw data field reference |
+
+Run `sync-knowledge` periodically (e.g. weekly) to pick up newly added fields, then restart the daemon:
+
+```bash
+uv run wqa sync-knowledge
+uv run wqa restart
+```
+
+### Manual curation
+
+You can also edit `.wqa/brain_knowledge.yaml` directly to add:
+
+- `proven_alphas`: expressions with known good performance to use as few-shot examples
+- `platform_tips`: turnover control, expression quality, settings optimization advice
+
+The sync command merges API data into the file without overwriting manually curated sections.
+
 ## Why It Exists
 
 The goal of WQA is not to replace quantitative judgment. The goal is to make the research loop more structured, more observable, and easier to repeat:
