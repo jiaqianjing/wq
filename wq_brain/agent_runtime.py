@@ -364,7 +364,7 @@ class RuntimeStore:
                     idea.get("source_title"),
                     idea.get("source_url"),
                     idea.get("status", "queued"),
-                    int(idea.get("priority", 50)),
+                    self._safe_priority(idea.get("priority", 50)),
                     idea.get("agent_notes", ""),
                     now,
                     now,
@@ -1451,12 +1451,20 @@ class AgentRuntime:
             )
         return ideas
 
+    @staticmethod
+    def _safe_priority(value: Any) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            mapping = {"low": 25, "medium": 50, "high": 75, "critical": 90}
+            return mapping.get(str(value).strip().lower(), 50)
+
     def _normalize_idea(self, idea: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "title": str(idea.get("title", "Untitled idea")).strip(),
             "summary": str(idea.get("summary", "")).strip() or "No summary",
             "rationale": str(idea.get("rationale", "")).strip(),
-            "priority": int(idea.get("priority", 50)),
+            "priority": self._safe_priority(idea.get("priority", 50)),
             "source_kind": idea.get("source_kind"),
             "source_title": idea.get("source_title"),
             "source_url": idea.get("source_url"),

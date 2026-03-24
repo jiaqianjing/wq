@@ -84,7 +84,7 @@ sources:
 
 ## 环境变量
 
-可以在 `.env` 文件中设置，系统通过 `${VAR}` 语法自动展开：
+通过 shell 环境变量传入，系统在 `config.yaml` 中通过 `${VAR}` 语法自动展开：
 
 ```bash
 GEMINI_API_KEY=your_key

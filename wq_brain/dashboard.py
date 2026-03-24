@@ -63,9 +63,14 @@ class DashboardServer:
                         self._send_json({"tail": read_log_tail(log_path, lines=40)})
                         return
                     self._send_html(render_dashboard_html())
+                except BrokenPipeError:
+                    pass
                 except Exception:
                     logger.exception("dashboard request error: %s", self.path)
-                    self._send_json({"error": "internal server error"}, status=500)
+                    try:
+                        self._send_json({"error": "internal server error"}, status=500)
+                    except BrokenPipeError:
+                        pass
 
             def log_message(self, format: str, *args: Any) -> None:  # noqa: A003
                 return
