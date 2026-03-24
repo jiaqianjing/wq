@@ -337,11 +337,11 @@ class RuntimeStore:
         inserted = 0
         now = utc_now()
         for idea in ideas:
-            # Deduplicate by title + summary hash to allow similar titles with different content
+            # Deduplicate: skip only if an identical idea is still queued or claimed
             existing = cur.execute(
                 """
                 SELECT id FROM ideas
-                WHERE title = ? AND summary = ?
+                WHERE title = ? AND summary = ? AND status IN ('queued', 'claimed')
                 ORDER BY created_at DESC
                 LIMIT 1
                 """,
@@ -1381,7 +1381,14 @@ class AgentRuntime:
             raw = provider.generate(system_prompt, user_prompt)
             ideas = json.loads(extract_json(raw))
             return [self._normalize_idea(idea) for idea in ideas[:batch_size]]
-        except Exception:
+        except Exception as exc:
+            logger.warning("researcher LLM failed, using fallback: %s", exc)
+            self.store.add_event(
+                level="error",
+                kind="researcher",
+                message=f"LLM call failed: {exc}",
+                payload={"error": str(exc), "provider": self.config.get("agents", {}).get("researcher", {}).get("llm_profile", "unknown")},
+            )
             return self._fallback_research_ideas(recent_sources, recent_experiments, batch_size)
 
     def _fallback_research_ideas(
