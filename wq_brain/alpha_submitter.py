@@ -34,17 +34,13 @@ class SubmissionCriteria:
     min_sharpe: float = 1.25
     min_fitness: float = 0.7
     max_turnover: float = 0.7
-    max_drawdown: float = 0.1
-    min_returns: float = 0.0
 
     def check(self, result: SimulateResult) -> bool:
         """检查结果是否符合提交标准"""
         return (
             result.sharpe >= self.min_sharpe and
             result.fitness >= self.min_fitness and
-            result.turnover <= self.max_turnover and
-            result.drawdown <= self.max_drawdown and
-            result.returns >= self.min_returns
+            result.turnover <= self.max_turnover
         )
 
 

@@ -104,7 +104,35 @@ uv run wqa restart
 
 ## Knowledge Base
 
-WQA maintains a local knowledge base (`.wqa/brain_knowledge.yaml`) that feeds platform-specific context into every agent prompt — proven alpha patterns, operator definitions, popular data fields, and practical tips.
+WQA maintains a local knowledge base (`.wqa/brain_knowledge.yaml`) that feeds platform-specific context into every agent prompt — proven alpha patterns, operator definitions, popular data fields, account permissions, and practical tips.
+
+### Account Info
+
+Probe your WorldQuant account to discover permissions, real submission thresholds, and available regions/delays:
+
+```bash
+uv run wqa account-info
+```
+
+This detects:
+
+- Genius level and onboarding status
+- SUPER alpha permission
+- Available regions (USA, CHN, EUR, ASI)
+- Available delays per region (0, 1)
+- Real platform submission checks (Sharpe, Fitness, Turnover limits, etc.)
+
+The results are saved to `brain_knowledge.yaml` as `account_profile` and automatically used by:
+
+- `_criteria()` — overrides config thresholds with real WQ limits
+- Researcher and Engineer prompts — injected as context so LLM knows account constraints
+
+Run after account changes (e.g. level upgrade) and restart the daemon:
+
+```bash
+uv run wqa account-info
+uv run wqa restart
+```
 
 ### Syncing from WorldQuant BRAIN
 
@@ -154,6 +182,10 @@ The goal of WQA is not to replace quantitative judgment. The goal is to make the
 
 ## Repository Contents
 
+- [`docs/architecture.md`](/Users/jiaqianjing/workspace/quant/wq/docs/architecture.md): system architecture, class overview, data flow diagrams
+- [`docs/configuration.md`](/Users/jiaqianjing/workspace/quant/wq/docs/configuration.md): complete config reference with all fields explained
+- [`docs/cli.md`](/Users/jiaqianjing/workspace/quant/wq/docs/cli.md): CLI command reference and typical workflows
+- [`docs/development.md`](/Users/jiaqianjing/workspace/quant/wq/docs/development.md): development guide, extension points, WQ API notes
 - [`docs/agent_lab.md`](/Users/jiaqianjing/workspace/quant/wq/docs/agent_lab.md): operational notes
 - [`tests/test_wqa_runtime.py`](/Users/jiaqianjing/workspace/quant/wq/tests/test_wqa_runtime.py): runtime smoke tests
 - [`results/README.md`](/Users/jiaqianjing/workspace/quant/wq/results/README.md): notes about generated runtime artifacts

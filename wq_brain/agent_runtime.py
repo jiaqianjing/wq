@@ -169,13 +169,6 @@ sources:
       url: https://export.arxiv.org/api/query?search_query=cat:q-fin.ST&sortBy=submittedDate&sortOrder=descending&max_results=8
   reports: []
   market: []
-
-thresholds:
-  min_sharpe: 1.25
-  min_fitness: 0.7
-  max_turnover: 0.7
-  max_drawdown: 0.12
-  min_returns: 0.0
 """
 
 
@@ -1043,6 +1036,24 @@ class AgentRuntime:
             return "\n".join(lines)
         return str(data)
 
+    def _account_profile_prompt(self) -> str:
+        """Format account profile for prompt injection."""
+        ap = self._brain_knowledge.get("account_profile")
+        if not ap:
+            return ""
+        lines = ["ACCOUNT PROFILE:"]
+        lines.append(f"  Level: {ap.get('genius_level', 'unknown')}, Super permitted: {ap.get('super_permitted', False)}")
+        lines.append(f"  Regions: {', '.join(ap.get('available_regions', []))}")
+        delays = ap.get("available_delays", {})
+        if delays:
+            lines.append(f"  Delays: {', '.join(f'{r}: d{d}' for r, ds in delays.items() for d in ds)}")
+        checks = ap.get("real_submission_checks", {})
+        if checks:
+            lines.append("  REAL WQ submission thresholds (from platform):")
+            for name, limit in checks.items():
+                lines.append(f"    {name}: {limit}")
+        return "\n".join(lines)
+
     def _worldquant_client(self) -> Optional[WorldQuantBrainClient]:
         wq_config = self.config.get("integrations", {}).get("worldquant", {})
         username = wq_config.get("username", "")
@@ -1056,13 +1067,11 @@ class AgentRuntime:
         return client
 
     def _criteria(self) -> SubmissionCriteria:
-        thresholds = self.config.get("thresholds", {})
+        real = self._brain_knowledge.get("account_profile", {}).get("real_submission_checks", {})
         return SubmissionCriteria(
-            min_sharpe=float(thresholds.get("min_sharpe", 1.25)),
-            min_fitness=float(thresholds.get("min_fitness", 0.7)),
-            max_turnover=float(thresholds.get("max_turnover", 0.7)),
-            max_drawdown=float(thresholds.get("max_drawdown", 0.12)),
-            min_returns=float(thresholds.get("min_returns", 0.0)),
+            min_sharpe=float(real.get("LOW_SHARPE", 1.25)),
+            min_fitness=float(real.get("LOW_FITNESS", 0.7)),
+            max_turnover=float(real.get("HIGH_TURNOVER", 0.7)),
         )
 
     def write_runtime_metadata(self) -> None:
@@ -1383,13 +1392,16 @@ class AgentRuntime:
         # Inject platform knowledge
         kb_proven = self._brain_knowledge_prompt("proven_alphas")
         kb_tips = self._brain_knowledge_prompt("platform_tips")
+        kb_account = self._account_profile_prompt()
         kb_section = ""
-        if kb_proven or kb_tips:
-            parts_kb = []
-            if kb_proven:
-                parts_kb.append(f"PROVEN ALPHA PATTERNS (reference these):\n{kb_proven}")
-            if kb_tips:
-                parts_kb.append(f"PLATFORM TIPS:\n{kb_tips}")
+        parts_kb = []
+        if kb_proven:
+            parts_kb.append(f"PROVEN ALPHA PATTERNS (reference these):\n{kb_proven}")
+        if kb_tips:
+            parts_kb.append(f"PLATFORM TIPS:\n{kb_tips}")
+        if kb_account:
+            parts_kb.append(kb_account)
+        if parts_kb:
             kb_section = "\n\n" + "\n\n".join(parts_kb)
 
         system_prompt = (
@@ -1397,7 +1409,7 @@ class AgentRuntime:
             "Your job: generate ideas that an engineer can turn into BRAIN FASTEXPR alpha expressions.\n\n"
             "BRAIN acceptance criteria:\n"
             f"  Sharpe >= {criteria.min_sharpe}, Fitness >= {criteria.min_fitness}, "
-            f"Turnover <= {criteria.max_turnover}, Drawdown <= {criteria.max_drawdown}\n\n"
+            f"Turnover <= {criteria.max_turnover}\n\n"
             "Available operators: rank, ts_corr, ts_delta, ts_mean, ts_std, ts_sum, ts_max, ts_min, "
             "ts_returns, ts_delay, ts_rank, ts_argmax, ts_argmin, ts_product, "
             "group_rank, group_neutralize, trade_when, ts_regression, vector_neut, "
@@ -1647,6 +1659,7 @@ class AgentRuntime:
         kb_proven = self._brain_knowledge_prompt("proven_alphas")
         kb_operators = self._brain_knowledge_prompt("operators_by_category") or self._brain_knowledge_prompt("advanced_operators")
         kb_fields = self._brain_knowledge_prompt("top_data_fields")
+        kb_account = self._account_profile_prompt()
         kb_section = ""
         if kb_proven:
             kb_section += f"\n\nPROVEN PATTERNS (use as inspiration):\n{kb_proven}"
@@ -1654,13 +1667,15 @@ class AgentRuntime:
             kb_section += f"\n\nALL AVAILABLE OPERATORS:\n{kb_operators}"
         if kb_fields:
             kb_section += f"\n\nTOP DATA FIELDS BY POPULARITY:\n{kb_fields}"
+        if kb_account:
+            kb_section += f"\n\n{kb_account}"
 
         system_prompt = (
             "You are a quant implementation agent for WorldQuant BRAIN. Return JSON only.\n"
             "Each item needs: name, category, expression, type.\n\n"
             "ACCEPTANCE CRITERIA (all must pass simultaneously):\n"
             f"  Sharpe >= {criteria.min_sharpe}, Fitness >= {criteria.min_fitness}, "
-            f"Turnover <= {criteria.max_turnover}, Drawdown <= {criteria.max_drawdown}\n\n"
+            f"Turnover <= {criteria.max_turnover}\n\n"
             "BRAIN FASTEXPR operators: rank, ts_corr, ts_delta, ts_mean, ts_std, ts_sum, "
             "ts_max, ts_min, ts_returns, ts_delay, ts_rank, ts_argmax, ts_argmin, ts_product, "
             "group_rank, group_neutralize, trade_when, ts_regression, vector_neut, "
@@ -1908,7 +1923,7 @@ class AgentRuntime:
             "Return JSON only: a list with name, expression, category, type.\n\n"
             "ACCEPTANCE CRITERIA:\n"
             f"  Sharpe >= {criteria.min_sharpe}, Fitness >= {criteria.min_fitness}, "
-            f"Turnover <= {criteria.max_turnover}, Drawdown <= {criteria.max_drawdown}\n\n"
+            f"Turnover <= {criteria.max_turnover}\n\n"
             "FIX STRATEGIES:\n"
             "- If turnover too high: wrap with group_neutralize(sector, ...), use longer ts windows, add ts_mean smoothing.\n"
             "- If fitness too low: combine with a second uncorrelated signal, add rank() wrapper.\n"
@@ -2151,3 +2166,108 @@ def sync_brain_knowledge(config_path: Path) -> Dict[str, Any]:
         "operators_file": str(ops_path),
         "datafields_file": str(fields_path),
     }
+
+
+def sync_account_info(config_path: Path) -> Dict[str, Any]:
+    """Probe WQ account permissions, real submission thresholds, and save to knowledge base."""
+    config = load_yaml_config(config_path)
+    state_dir = Path(config["app"]["state_dir"]).resolve()
+    wq_config = config.get("integrations", {}).get("worldquant", {})
+    username = wq_config.get("username", "")
+    password = wq_config.get("password", "")
+    if not username or not password:
+        return {"error": "WorldQuant credentials not configured"}
+
+    client = WorldQuantBrainClient(username, password)
+    if not client.authenticate():
+        return {"error": "WorldQuant authentication failed"}
+
+    base = client.BASE_URL
+    profile: Dict[str, Any] = {}
+
+    # 1. User profile
+    r = client._request("get", f"{base}/users/self", timeout=15)
+    if r.status_code == 200:
+        u = r.json()
+        profile["username"] = u.get("id", "")
+        profile["genius_level"] = u.get("geniusLevel", "")
+        profile["onboarding"] = u.get("onboarding", {}).get("status", "")
+
+    # 2. Consultant info
+    r = client._request("get", f"{base}/users/self/consultant", timeout=15)
+    if r.status_code == 200:
+        c = r.json()
+        profile["submissions"] = c.get("submissions", 0)
+        profile["super_submissions"] = c.get("superAlphaSubmissions", 0)
+
+    # 3. Alpha stats
+    r = client._request("get", f"{base}/users/self/alphas?limit=1", timeout=15)
+    if r.status_code == 200:
+        profile["total_alphas"] = r.json().get("count", 0)
+
+    # 4. Check SUPER permission
+    try:
+        r = client._request("post", f"{base}/simulations", json={
+            "type": "SUPER",
+            "settings": {"instrumentType": "EQUITY", "region": "USA", "universe": "TOP3000",
+                         "delay": 1, "decay": 0, "neutralization": "SUBINDUSTRY", "truncation": 0.08,
+                         "pasteurization": "ON", "unitHandling": "VERIFY", "nanHandling": "ON",
+                         "language": "FASTEXPR", "visualization": False},
+            "regular": "close"
+        }, timeout=15)
+        profile["super_permitted"] = "not permissioned" not in r.text.lower()
+    except Exception:
+        profile["super_permitted"] = False
+
+    # 5. Probe available regions and delays together
+    available_regions = []
+    delay_map = {}
+    for region in ["USA", "CHN", "EUR", "ASI"]:
+        delays = []
+        for d in [0, 1]:
+            r = client._request("get", f"{base}/data-fields?instrumentType=EQUITY&region={region}&delay={d}&universe=TOP3000&limit=1", timeout=10)
+            if r.status_code == 200:
+                data = r.json()
+                cnt = data.get("count", 0) if isinstance(data, dict) and "count" in data else len(data.get("results", [])) if isinstance(data, dict) else 0
+                if cnt > 0:
+                    delays.append(d)
+        if delays:
+            available_regions.append(region)
+            delay_map[region] = delays
+    profile["available_regions"] = available_regions
+    profile["available_delays"] = delay_map
+
+    # 7. Extract real submission checks from a recent alpha
+    r = client._request("get", f"{base}/users/self/alphas?limit=10", timeout=15)
+    if r.status_code == 200:
+        checks_extracted = {}
+        for alpha in r.json().get("results", []):
+            is_data = alpha.get("is", {})
+            for chk in is_data.get("checks", []) if isinstance(is_data, dict) else []:
+                name = chk.get("name", "")
+                if name and "limit" in chk and name not in checks_extracted:
+                    checks_extracted[name] = chk["limit"]
+        if checks_extracted:
+            profile["real_submission_checks"] = checks_extracted
+
+    # 8. Save to knowledge base
+    ensure_directory(state_dir)
+    kb_path = state_dir / "brain_knowledge.yaml"
+    kb: Dict[str, Any] = {}
+    if kb_path.exists():
+        try:
+            kb = load_yaml_config(kb_path)
+        except Exception:
+            kb = {}
+
+    kb["account_profile"] = profile
+
+    if yaml is not None:
+        kb_path.write_text(
+            yaml.dump(kb, allow_unicode=True, default_flow_style=False, sort_keys=False, width=120),
+            encoding="utf-8",
+        )
+    else:
+        kb_path.with_suffix(".json").write_text(json.dumps(kb, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    return profile

@@ -52,6 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("status", help="Show daemon and queue status")
     subparsers.add_parser("restart", help="Restart the runtime")
     subparsers.add_parser("sync-knowledge", help="Sync operators and data fields from WorldQuant BRAIN into local knowledge base")
+    subparsers.add_parser("account-info", help="Probe WorldQuant account permissions, submission thresholds, and save to knowledge base")
     subparsers.add_parser("run-daemon", help=argparse.SUPPRESS)
     return parser
 
@@ -91,6 +92,13 @@ def main(argv: list[str] | None = None) -> None:
         ensure_config_exists(config_path)
         from .agent_runtime import sync_brain_knowledge
         result = sync_brain_knowledge(config_path)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return
+
+    if args.command == "account-info":
+        ensure_config_exists(config_path)
+        from .agent_runtime import sync_account_info
+        result = sync_account_info(config_path)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return
 
