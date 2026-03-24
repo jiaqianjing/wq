@@ -33,6 +33,7 @@ agents:
     interval_seconds: 900          # 每 15 分钟跑一轮
     llm_profile: gemini            # 引用 providers 中的 key
     idea_batch_size: 4             # 每轮生成几个 idea
+    max_queued_ideas: 20           # 队列上限，达到后 researcher 暂停生产
   engineer:
     enabled: true
     interval_seconds: 300          # 每 5 分钟跑一轮

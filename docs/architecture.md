@@ -36,7 +36,8 @@ WQA 是一个多 agent 量化研究自动化系统，围绕 WorldQuant BRAIN 平
 ```
 wq_brain/
 ├── agent_cli.py          # CLI 入口，所有 wqa 子命令
-├── agent_runtime.py      # 核心：daemon、agent 循环、dashboard、知识库
+├── agent_runtime.py      # 核心：daemon、agent 循环、知识库、RuntimeStore
+├── dashboard.py          # Dashboard HTTP 服务器（从 agent_runtime 拆出）
 ├── client.py             # WorldQuant BRAIN API 客户端
 ├── alpha_generator.py    # Alpha 模板生成器（历史遗留，部分功能已迁移到 agent_runtime）
 ├── alpha_submitter.py    # 模拟提交流程、SubmissionCriteria
@@ -56,7 +57,7 @@ wq_brain/
 |---|---|
 | `run_foreground()` | 启动 daemon 主循环，拉起三个 agent 线程 + dashboard |
 | `_agent_loop(name)` | 单个 agent 的无限循环，按 interval 调度 |
-| `run_researcher_cycle()` | 抓取 RSS → LLM 生成 idea → 入队 |
+| `run_researcher_cycle()` | 检查队列深度 → 抓取 RSS → LLM 生成 idea → 入队 |
 | `run_engineer_cycle()` | 消费 idea → LLM 生成表达式 → WQ 模拟 → 记录结果 |
 | `run_reviewer_cycle()` | Phase 1: 评审+提交 → Phase 2: 修复近似失败的实验 |
 | `_criteria()` | 返回提交标准，优先使用 account-info 同步的真实 WQ 门槛 |
@@ -116,7 +117,7 @@ class SubmissionCriteria:
 2. RuntimeStore.add_source_items()
    ↓ 去重入库
 3. Researcher: LLM(sources + reflection + knowledge) → ideas
-   ↓
+   ↓ (跳过如果 queued >= max_queued_ideas)
 4. RuntimeStore.add_ideas()
    ↓ 去重入队
 5. Engineer: claim_ideas() → LLM(idea + knowledge) → expressions
@@ -172,7 +173,7 @@ BaseLLMProvider          # 抽象基类，generate(system, user) → str
 
 ## Dashboard
 
-`DashboardServer` 在 daemon 启动时拉起一个 HTTP 服务（默认 `127.0.0.1:8765`）。
+`DashboardServer`（`dashboard.py`）在 daemon 启动时拉起一个 HTTP 服务（默认 `127.0.0.1:8765`）。
 
 端点：
 - `GET /` — HTML 页面，展示全局概览

@@ -140,6 +140,7 @@ agents:
     interval_seconds: 900
     llm_profile: gemini
     idea_batch_size: 4
+    max_queued_ideas: 20
   engineer:
     enabled: true
     interval_seconds: 300
@@ -725,6 +726,12 @@ class RuntimeStore:
             "latest_accept": latest_accept,
         }
 
+    def queued_idea_count(self) -> int:
+        conn = self._connect()
+        count = conn.execute("SELECT COUNT(*) FROM ideas WHERE status = 'queued'").fetchone()[0]
+        conn.close()
+        return count
+
 
 class BaseLLMProvider:
     def generate(self, system_prompt: str, user_prompt: str) -> str:
@@ -893,87 +900,6 @@ class SourceCollector:
         return items
 
 
-class DashboardServer:
-    def __init__(self, store: RuntimeStore, host: str, port: int, config_path: Path, log_path: Path):
-        self.store = store
-        self.host = host
-        self.port = port
-        self.config_path = config_path
-        self.log_path = log_path
-        self._server = None
-        self._thread = None
-
-    def start(self) -> None:
-        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-
-        store = self.store
-        config_path = self.config_path
-        log_path = self.log_path
-
-        class Handler(BaseHTTPRequestHandler):
-            def do_GET(self) -> None:  # noqa: N802
-                if self.path == "/api/summary":
-                    self._send_json(store.summary())
-                    return
-                if self.path == "/api/ideas":
-                    self._send_json(store.list_recent_ideas())
-                    return
-                if self.path == "/api/experiments":
-                    self._send_json(store.list_recent_experiments())
-                    return
-                if self.path == "/api/events":
-                    self._send_json(store.list_recent_events())
-                    return
-                if self.path == "/api/feedback":
-                    self._send_json(store.list_feedback())
-                    return
-                if self.path == "/api/reflections":
-                    self._send_json(store.list_recent_reflections())
-                    return
-                if self.path == "/api/config":
-                    self._send_json(read_config_snapshot(config_path))
-                    return
-                if self.path == "/api/logs":
-                    self._send_json({"tail": read_log_tail(log_path, lines=40)})
-                    return
-                self._send_html(render_dashboard_html())
-
-            def log_message(self, format: str, *args: Any) -> None:  # noqa: A003
-                return
-
-            def _send_json(self, payload: Any) -> None:
-                body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-
-            def _send_html(self, text: str) -> None:
-                body = text.encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-
-        self._server = ThreadingHTTPServer((self.host, self.port), Handler)
-        self._thread = threading.Thread(target=self._server.serve_forever, name="dashboard", daemon=True)
-        self._thread.start()
-
-    def stop(self) -> None:
-        if self._server is not None:
-            self._server.shutdown()
-            self._server.server_close()
-        if self._thread is not None:
-            self._thread.join(timeout=5)
-
-
-def render_dashboard_html() -> str:
-    _html_path = Path(__file__).parent / "static" / "dashboard.html"
-    return _html_path.read_text(encoding="utf-8")
-
-
 
 
 class AgentRuntime:
@@ -987,6 +913,7 @@ class AgentRuntime:
         self.log_dir = ensure_directory(self.state_dir / "logs")
         self.store = RuntimeStore(self.runtime_db)
         self.stop_event = threading.Event()
+        from wq_brain.dashboard import DashboardServer
         self.dashboard = DashboardServer(
             self.store,
             host=self.config["app"].get("dashboard_host", "127.0.0.1"),
@@ -1157,6 +1084,16 @@ class AgentRuntime:
         elapsed: float,
     ) -> int:
         if agent_name == "researcher":
+            # If queue is full, back off to full interval
+            if summary.startswith("queue full"):
+                return interval_seconds
+            # If queue is low, produce faster (1/3 of normal interval)
+            max_queued = int(
+                self.config.get("agents", {}).get("researcher", {}).get("max_queued_ideas", 20)
+            )
+            current_queued = self.store.queued_idea_count()
+            if current_queued < max_queued // 2:
+                return max(interval_seconds // 3 - int(elapsed), 1)
             return max(interval_seconds - int(elapsed), 1)
 
         if summary in {"no queued ideas", "no promising experiments"}:
@@ -1166,6 +1103,12 @@ class AgentRuntime:
         return max(interval_seconds - int(elapsed), 1)
 
     def run_researcher_cycle(self) -> str:
+        max_queued = int(
+            self.config.get("agents", {}).get("researcher", {}).get("max_queued_ideas", 20)
+        )
+        current_queued = self.store.queued_idea_count()
+        if current_queued >= max_queued:
+            return f"queue full ({current_queued}/{max_queued}), skipping"
         self.store.set_agent_status("researcher", "running", "collecting sources")
         items = self.collector.collect()
         inserted = self.store.add_source_items(items)

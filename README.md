@@ -48,7 +48,8 @@ The system also keeps a lightweight feedback loop:
 The runtime is intentionally small and centered on a few modules:
 
 - `wq_brain/agent_cli.py`: command-line entrypoint
-- `wq_brain/agent_runtime.py`: daemon, dashboard, queue orchestration, and agent loops
+- `wq_brain/agent_runtime.py`: daemon, queue orchestration, and agent loops
+- `wq_brain/dashboard.py`: local dashboard HTTP server
 - `wq_brain/client.py`: WorldQuant API client
 - `wq_brain/alpha_generator.py`: alpha candidate generation
 - `wq_brain/alpha_submitter.py`: simulation and submission workflow

@@ -46,7 +46,7 @@ uv run python -m pytest tests/test_wqa_runtime.py -q
 
 ### 为什么 agent_runtime.py 这么大？
 
-有意为之。所有 agent 逻辑、存储、dashboard 集中在一个文件中，减少跨文件跳转。当文件增长到难以维护时再拆分。
+有意为之。核心 agent 逻辑和存储集中在一个文件中，减少跨文件跳转。Dashboard HTTP 服务已拆分到 `dashboard.py`。当其他部分增长到难以维护时再继续拆分。
 
 ### 为什么不用 config 配置提交门槛？
 

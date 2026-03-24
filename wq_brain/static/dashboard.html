@@ -411,12 +411,14 @@ function render(){
 }
 
 async function refresh(){
-  const[summary,ideas,experiments,feedback,events,reflections,config,logs]=await Promise.all([
-    api("/api/summary"),api("/api/ideas"),api("/api/experiments"),api("/api/feedback"),
-    api("/api/events"),api("/api/reflections"),api("/api/config"),api("/api/logs")
-  ]);
-  _data={summary,ideas,experiments,feedback,events,reflections,config,logs};
-  render();
+  try{
+    const[summary,ideas,experiments,feedback,events,reflections,config,logs]=await Promise.all([
+      api("/api/summary"),api("/api/ideas"),api("/api/experiments"),api("/api/feedback"),
+      api("/api/events"),api("/api/reflections"),api("/api/config"),api("/api/logs")
+    ]);
+    _data={summary,ideas,experiments,feedback,events,reflections,config,logs};
+    render();
+  }catch(e){console.warn("refresh failed",e)}
 }
 
 function tick(){$("#clock").textContent=new Date().toLocaleTimeString()}

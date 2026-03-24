@@ -69,6 +69,7 @@ http://127.0.0.1:8765
 ## 当前实现边界
 
 - Researcher 的数据抓取现在支持通用 RSS/Atom 和 arXiv Atom API。
+- Researcher 会感知 idea 队列深度：队列达到 `max_queued_ideas`（默认 20）时暂停生产；队列低于上限一半时自动缩短等待间隔（降至 1/3）加速补货。
 - Gemini 通过 Google Gemini `generateContent` 接口调用。
 - Kimi 通过 OpenAI-compatible `chat/completions` 方式调用，默认 `base_url` 为 `https://api.moonshot.cn/v1`。
 - 如果缺少 LLM 或 WorldQuant 配置，系统会自动降级到本地 fallback 流程，并将实验标记为 `blocked` 或使用启发式 ideas。
