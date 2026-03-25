@@ -26,6 +26,11 @@ providers:
     model_name: moonshot-v1-8k     # Kimi 模型名
     api_key: ${KIMI_API_KEY}
     base_url: https://api.moonshot.cn/v1  # OpenAI-compatible 端点
+  siliconflow:
+    provider: siliconflow
+    model_name: deepseek-ai/DeepSeek-V3  # SiliconFlow 模型名
+    api_key: ${SILICONFLOW_API_KEY}
+    base_url: https://api.siliconflow.cn/v1  # OpenAI-compatible 端点
 
 agents:
   researcher:
@@ -48,6 +53,7 @@ integrations:
   worldquant:
     username: ${WQB_USERNAME}
     password: ${WQB_PASSWORD}
+    disable_proxy: true            # 忽略系统代理，排查 ProxyError / Read timed out 时可开启
     region: USA                    # 默认区域
     universe: TOP3000              # 默认 universe
     auto_submit: true              # 达标后自动提交
@@ -89,6 +95,7 @@ sources:
 ```bash
 GEMINI_API_KEY=your_key
 KIMI_API_KEY=your_key
+SILICONFLOW_API_KEY=your_key
 WQB_USERNAME=your_email
 WQB_PASSWORD=your_password
 TG_BOT_TOKEN=your_bot_token
@@ -101,6 +108,7 @@ TG_CHAT_ID=your_chat_id
 
 - `gemini` → `GeminiProvider`（Google Gemini generateContent API）
 - `kimi` → `KimiProvider`（OpenAI-compatible chat/completions，需要 `base_url`）
+- `siliconflow` → `SiliconFlowProvider`（OpenAI-compatible chat/completions，默认 `https://api.siliconflow.cn/v1`）
 
 然后在 `agents` 段的 `llm_profile` 引用新 key 即可。
 

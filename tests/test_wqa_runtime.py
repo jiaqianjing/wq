@@ -2,6 +2,9 @@ from pathlib import Path
 
 from wq_brain.agent_runtime import (
     RuntimeStore,
+    SiliconFlowProvider,
+    create_llm_provider,
+    describe_llm_profile,
     init_runtime_config,
     read_config_snapshot,
     read_log_tail,
@@ -97,3 +100,40 @@ def test_runtime_store_lists_recent_reflections(tmp_path: Path) -> None:
     assert reflections[0]["payload"]["improvement_directions"] == ["reduce turnover"]
     assert reflections[0]["payload"]["discarded_motifs"][0]["motif"] == "mean_reversion"
     assert reflections[0]["payload"]["queued_idea_lineage"][0]["idea_title"] == "idea-a"
+
+
+def test_create_llm_provider_supports_siliconflow() -> None:
+    provider = create_llm_provider(
+        {
+            "providers": {
+                "sf": {
+                    "provider": "siliconflow",
+                    "model_name": "deepseek-ai/DeepSeek-V3",
+                    "api_key": "demo-key",
+                }
+            }
+        },
+        "sf",
+    )
+    assert isinstance(provider, SiliconFlowProvider)
+
+
+def test_describe_llm_profile_reports_siliconflow_model() -> None:
+    config = {
+        "providers": {
+            "sf": {
+                "provider": "siliconflow",
+                "model_name": "moonshotai/Kimi-K2-Thinking",
+                "api_key": "demo-key",
+                "base_url": "https://api.siliconflow.cn/v1",
+            }
+        }
+    }
+    provider = create_llm_provider(config, "sf")
+    info = describe_llm_profile(config, "sf", provider)
+    assert info == {
+        "profile": "sf",
+        "provider": "siliconflow",
+        "model_name": "moonshotai/Kimi-K2-Thinking",
+        "base_url": "https://api.siliconflow.cn/v1",
+    }

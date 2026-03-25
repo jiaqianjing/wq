@@ -113,7 +113,7 @@ def read_log_tail(log_path: Path, lines: int = 40) -> str:
 DEFAULT_CONFIG_TEMPLATE = """# wqa: WorldQuant Agent Lab
 # 运行前建议：
 # 1. 填入 WorldQuant Brain 账号
-# 2. 至少选择一个 LLM profile（gemini 或 kimi）
+# 2. 至少选择一个 LLM profile（gemini、kimi 或 siliconflow）
 # 3. 如需通知，填入 Telegram bot token 与 chat_id
 
 app:
@@ -133,6 +133,11 @@ providers:
     model_name: moonshot-v1-8k
     api_key: ${KIMI_API_KEY}
     base_url: https://api.moonshot.cn/v1
+  siliconflow:
+    provider: siliconflow
+    model_name: deepseek-ai/DeepSeek-V3
+    api_key: ${SILICONFLOW_API_KEY}
+    base_url: https://api.siliconflow.cn/v1
 
 agents:
   researcher:
@@ -155,6 +160,7 @@ integrations:
   worldquant:
     username: ${WQB_USERNAME}
     password: ${WQB_PASSWORD}
+    disable_proxy: false
     region: USA
     universe: TOP3000
     auto_submit: true
@@ -742,16 +748,22 @@ class RuntimeStore:
 
 
 class BaseLLMProvider:
+    provider_name = "unknown"
+
     def generate(self, system_prompt: str, user_prompt: str) -> str:
         raise NotImplementedError
 
 
 class DisabledLLMProvider(BaseLLMProvider):
+    provider_name = "disabled"
+
     def generate(self, system_prompt: str, user_prompt: str) -> str:
         raise RuntimeError("LLM provider is not configured")
 
 
 class GeminiProvider(BaseLLMProvider):
+    provider_name = "gemini"
+
     def __init__(self, model_name: str, api_key: str):
         self.model_name = model_name
         self.api_key = api_key
@@ -784,6 +796,8 @@ class GeminiProvider(BaseLLMProvider):
 
 
 class KimiProvider(BaseLLMProvider):
+    provider_name = "kimi"
+
     def __init__(self, model_name: str, api_key: str, base_url: str):
         self.model_name = model_name
         self.api_key = api_key
@@ -813,6 +827,36 @@ class KimiProvider(BaseLLMProvider):
         return payload["choices"][0]["message"]["content"]
 
 
+class SiliconFlowProvider(BaseLLMProvider):
+    provider_name = "siliconflow"
+
+    def __init__(self, model_name: str, api_key: str, base_url: str):
+        self.model_name = model_name
+        self.api_key = api_key
+        self.base_url = base_url.rstrip("/")
+
+    def generate(self, system_prompt: str, user_prompt: str) -> str:
+        response = requests.post(
+            f"{self.base_url}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": self.model_name,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                "temperature": 0.4,
+            },
+            timeout=180,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        return payload["choices"][0]["message"]["content"]
+
+
 def create_llm_provider(config: Dict[str, Any], profile_name: Optional[str]) -> BaseLLMProvider:
     providers = config.get("providers", {})
     if not profile_name or profile_name not in providers:
@@ -831,7 +875,24 @@ def create_llm_provider(config: Dict[str, Any], profile_name: Optional[str]) -> 
             api_key=api_key,
             base_url=profile.get("base_url", "https://api.moonshot.cn/v1"),
         )
+    if provider == "siliconflow":
+        return SiliconFlowProvider(
+            model_name=model_name,
+            api_key=api_key,
+            base_url=profile.get("base_url", "https://api.siliconflow.cn/v1"),
+        )
     return DisabledLLMProvider()
+
+
+def describe_llm_profile(config: Dict[str, Any], profile_name: Optional[str], provider: BaseLLMProvider) -> Dict[str, str]:
+    providers = config.get("providers", {})
+    profile = providers.get(profile_name or "", {})
+    return {
+        "profile": profile_name or "disabled",
+        "provider": getattr(provider, "provider_name", "unknown"),
+        "model_name": str(profile.get("model_name", "") or getattr(provider, "model_name", "")),
+        "base_url": str(profile.get("base_url", "") or getattr(provider, "base_url", "")),
+    }
 
 
 class TelegramNotifier:
@@ -1005,7 +1066,11 @@ class AgentRuntime:
         password = wq_config.get("password", "")
         if not username or not password:
             return None
-        client = WorldQuantBrainClient(username, password)
+        client = WorldQuantBrainClient(
+            username,
+            password,
+            disable_proxy=bool(wq_config.get("disable_proxy", False)),
+        )
         if not client.authenticate():
             raise RuntimeError("WorldQuant authentication failed")
         client.submission_log_path = str(self.state_dir / "submission_checks.jsonl")
@@ -1132,14 +1197,22 @@ class AgentRuntime:
         inserted = self.store.add_source_items(items)
         recent_sources = self.store.recent_sources(limit=8)
         recent_experiments = self.store.list_recent_experiments(limit=8)
-        provider = create_llm_provider(
-            self.config,
-            self.config.get("agents", {}).get("researcher", {}).get("llm_profile"),
-        )
+        profile_name = self.config.get("agents", {}).get("researcher", {}).get("llm_profile")
+        provider = create_llm_provider(self.config, profile_name)
+        provider_info = describe_llm_profile(self.config, profile_name, provider)
         batch_size = int(
             self.config.get("agents", {}).get("researcher", {}).get("idea_batch_size", 4)
         )
         self.store.set_agent_status("researcher", "running", f"generating ideas from {len(recent_sources)} sources")
+        self.store.add_event(
+            level="info",
+            kind="researcher",
+            message=(
+                "researcher using llm profile "
+                f"{provider_info['profile']} ({provider_info['provider']}) model={provider_info['model_name']}"
+            ),
+            payload=provider_info,
+        )
         ideas = self._generate_research_ideas(provider, recent_sources, recent_experiments, batch_size)
         reflection = self._build_research_reflection(recent_sources, recent_experiments, ideas)
         inserted_ideas = self.store.add_ideas(ideas)
@@ -1487,9 +1560,17 @@ class AgentRuntime:
         if not claimed_ideas:
             return "no queued ideas"
 
-        provider = create_llm_provider(
-            self.config,
-            self.config.get("agents", {}).get("engineer", {}).get("llm_profile"),
+        profile_name = self.config.get("agents", {}).get("engineer", {}).get("llm_profile")
+        provider = create_llm_provider(self.config, profile_name)
+        provider_info = describe_llm_profile(self.config, profile_name, provider)
+        self.store.add_event(
+            level="info",
+            kind="engineer",
+            message=(
+                "engineer using llm profile "
+                f"{provider_info['profile']} ({provider_info['provider']}) model={provider_info['model_name']}"
+            ),
+            payload=provider_info,
         )
         alpha_batch_size = int(self.config.get("agents", {}).get("engineer", {}).get("alpha_batch_size", 4))
         client = None
@@ -1830,9 +1911,17 @@ class AgentRuntime:
         if not client:
             return 0
 
-        provider = create_llm_provider(
-            self.config,
-            self.config.get("agents", {}).get("reviewer", {}).get("llm_profile"),
+        profile_name = self.config.get("agents", {}).get("reviewer", {}).get("llm_profile")
+        provider = create_llm_provider(self.config, profile_name)
+        provider_info = describe_llm_profile(self.config, profile_name, provider)
+        self.store.add_event(
+            level="info",
+            kind="reviewer",
+            message=(
+                "reviewer using llm profile "
+                f"{provider_info['profile']} ({provider_info['provider']}) model={provider_info['model_name']}"
+            ),
+            payload=provider_info,
         )
 
         refined_count = 0
@@ -2035,7 +2124,11 @@ def sync_brain_knowledge(config_path: Path) -> Dict[str, Any]:
     if not username or not password:
         return {"error": "WorldQuant credentials not configured"}
 
-    client = WorldQuantBrainClient(username, password)
+    client = WorldQuantBrainClient(
+        username,
+        password,
+        disable_proxy=bool(wq_config.get("disable_proxy", False)),
+    )
     if not client.authenticate():
         return {"error": "WorldQuant authentication failed"}
 
@@ -2154,7 +2247,11 @@ def sync_account_info(config_path: Path) -> Dict[str, Any]:
     if not username or not password:
         return {"error": "WorldQuant credentials not configured"}
 
-    client = WorldQuantBrainClient(username, password)
+    client = WorldQuantBrainClient(
+        username,
+        password,
+        disable_proxy=bool(wq_config.get("disable_proxy", False)),
+    )
     if not client.authenticate():
         return {"error": "WorldQuant authentication failed"}
 

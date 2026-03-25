@@ -106,16 +106,17 @@ class WorldQuantBrainClient:
     """WorldQuant Brain API 客户端"""
 
     BASE_URL = "https://api.worldquantbrain.com"
-    DEFAULT_SIMULATION_MAX_WAIT = 300
-    DEFAULT_SIMULATION_RETRY_WAIT = 120
+    DEFAULT_SIMULATION_MAX_WAIT = 600
+    DEFAULT_SIMULATION_RETRY_WAIT = 300
     DEFAULT_CHECK_MAX_WAIT = 180
 
-    def __init__(self, username: str, password: str):
+    def __init__(self, username: str, password: str, disable_proxy: bool = False):
         self.username = username
         self.password = password
         self.session = requests.Session()
+        self.proxy_disabled = disable_proxy
         # 某些环境下系统代理会导致 API 连接不稳定，可按需关闭
-        if os.getenv("WQB_DISABLE_PROXY", "").lower() in {"1", "true", "yes", "on"}:
+        if self.proxy_disabled:
             self.session.trust_env = False
         self.auth_token: Optional[str] = None
         self.refresh_token: Optional[str] = None
@@ -243,7 +244,11 @@ class WorldQuantBrainClient:
                 self.use_bearer_auth = False
                 # cookie 过期时间不一定可用，使用保守刷新时间
                 self.token_expiry = time.time() + 82800
-                logger.info(f"认证成功(Session): {self.username}")
+                logger.info(
+                    "认证成功(Session): %s [proxy_disabled=%s]",
+                    self.username,
+                    self.proxy_disabled,
+                )
                 return True
 
             if token:
@@ -252,7 +257,11 @@ class WorldQuantBrainClient:
                 self.use_bearer_auth = True
                 # Token 通常有效期为 24 小时
                 self.token_expiry = time.time() + 82800  # 23 小时后刷新
-                logger.info(f"认证成功(Bearer): {self.username}")
+                logger.info(
+                    "认证成功(Bearer): %s [proxy_disabled=%s]",
+                    self.username,
+                    self.proxy_disabled,
+                )
                 return True
 
             logger.error("认证失败: 响应中未获取到 token，且无会话 cookie")
@@ -455,9 +464,11 @@ class WorldQuantBrainClient:
             SimulateResult: 模拟结果
         """
         start_time = time.time()
+        poll_count = 0
 
         while time.time() - start_time < max_wait:
             try:
+                poll_count += 1
                 response = self._request(
                     "get",
                     progress_url,
@@ -471,7 +482,13 @@ class WorldQuantBrainClient:
                     retry_after = response.headers.get("Retry-After")
                     if retry_after:
                         wait_time = float(retry_after)
-                        logger.info(f"模拟进行中... 等待 {wait_time:.1f} 秒")
+                        elapsed = time.time() - start_time
+                        logger.info(
+                            "模拟进行中... poll=%d elapsed=%.1fs retry_after=%.1fs",
+                            poll_count,
+                            elapsed,
+                            wait_time,
+                        )
                         time.sleep(wait_time)
                         continue
                     
@@ -482,16 +499,36 @@ class WorldQuantBrainClient:
 
                     status = str(data.get("status", "")).upper()
                     if status and status not in ["COMPLETE", "PASS", "FAIL"]:
+                        if poll_count == 1 or poll_count % 12 == 0:
+                            logger.info(
+                                "模拟尚未完成... poll=%d elapsed=%.1fs status=%s",
+                                poll_count,
+                                time.time() - start_time,
+                                status,
+                            )
                         time.sleep(5)
                         continue
 
                     progress = data.get("progress")
                     if isinstance(progress, (int, float)) and progress < 1:
+                        if poll_count == 1 or poll_count % 12 == 0:
+                            logger.info(
+                                "模拟进度等待中... poll=%d elapsed=%.1fs progress=%.3f",
+                                poll_count,
+                                time.time() - start_time,
+                                float(progress),
+                            )
                         time.sleep(5)
                         continue
 
                     ready = data.get("ready")
                     if ready is False:
+                        if poll_count == 1 or poll_count % 12 == 0:
+                            logger.info(
+                                "模拟结果未就绪... poll=%d elapsed=%.1fs",
+                                poll_count,
+                                time.time() - start_time,
+                            )
                         time.sleep(5)
                         continue
 
@@ -511,7 +548,12 @@ class WorldQuantBrainClient:
                 time.sleep(5)
 
             except Exception as e:
-                logger.warning(f"检查模拟状态出错: {e}")
+                logger.warning(
+                    "检查模拟状态出错: %s [poll=%d elapsed=%.1fs]",
+                    e,
+                    poll_count,
+                    time.time() - start_time,
+                )
                 time.sleep(5)
 
         return SimulateResult(
@@ -524,7 +566,7 @@ class WorldQuantBrainClient:
             drawdown=0,
             margin=0,
             is_submittable=False,
-            error_message="模拟超时"
+            error_message=f"模拟超时 after {int(time.time() - start_time)}s and {poll_count} polls"
         )
 
     def _get_alpha_result(self, alpha_id: str) -> SimulateResult:
