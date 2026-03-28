@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import signal
 import sqlite3
 import subprocess
@@ -140,7 +141,7 @@ providers:
     base_url: https://api.siliconflow.cn/v1
   anthropic:
     provider: anthropic
-    model_name: claude-opus-4
+    model_name: claude-opus-4-20250514
     api_key: ${ANTHROPIC_API_KEY}
     base_url: https://api.anthropic.com
 
@@ -853,6 +854,47 @@ class DisabledLLMProvider(BaseLLMProvider):
         raise RuntimeError("LLM provider is not configured")
 
 
+ANTHROPIC_MODEL_ALIASES = {
+    # Anthropic expects snapshot model IDs for Opus 4.
+    "claude-opus-4": "claude-opus-4-20250514",
+}
+
+FASTEXPR_OPERATOR_ALIASES = {
+    "ts_std": "ts_std_dev",
+}
+
+
+def normalize_anthropic_model_name(model_name: str) -> str:
+    return ANTHROPIC_MODEL_ALIASES.get(model_name.strip(), model_name.strip())
+
+
+def normalize_fastexpr_operators(expression: str) -> str:
+    normalized = expression or ""
+    for alias, canonical in FASTEXPR_OPERATOR_ALIASES.items():
+        normalized = re.sub(rf"\b{re.escape(alias)}(?=\s*\()", canonical, normalized)
+    return normalized
+
+
+def format_http_error(response: requests.Response, service_name: str) -> str:
+    detail = ""
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+    if isinstance(payload, dict):
+        error = payload.get("error", payload)
+        if isinstance(error, dict):
+            detail = str(error.get("message") or error.get("error") or "").strip()
+        else:
+            detail = str(error).strip()
+    if not detail:
+        detail = response.text.strip()
+    detail = " ".join(detail.split())
+    if detail:
+        return f"{service_name} API error HTTP {response.status_code} for {response.url}: {detail[:300]}"
+    return f"{service_name} API error HTTP {response.status_code} for {response.url}"
+
+
 class GeminiProvider(BaseLLMProvider):
     provider_name = "gemini"
 
@@ -953,7 +995,7 @@ class AnthropicProvider(BaseLLMProvider):
     provider_name = "anthropic"
 
     def __init__(self, model_name: str, api_key: str, base_url: str):
-        self.model_name = model_name
+        self.model_name = normalize_anthropic_model_name(model_name)
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
 
@@ -982,7 +1024,8 @@ class AnthropicProvider(BaseLLMProvider):
                 logger.warning("Anthropic 429 rate limited, retrying in %ds (attempt %d/%d)", wait, attempt + 1, max_retries)
                 time.sleep(wait)
                 continue
-            response.raise_for_status()
+            if response.status_code >= 400:
+                raise RuntimeError(format_http_error(response, "Anthropic"))
             break
         payload = response.json()
         content = payload.get("content", [])
@@ -1028,7 +1071,7 @@ def describe_llm_profile(config: Dict[str, Any], profile_name: Optional[str], pr
     return {
         "profile": profile_name or "disabled",
         "provider": getattr(provider, "provider_name", "unknown"),
-        "model_name": str(profile.get("model_name", "") or getattr(provider, "model_name", "")),
+        "model_name": str(getattr(provider, "model_name", "") or profile.get("model_name", "")),
         "base_url": str(profile.get("base_url", "") or getattr(provider, "base_url", "")),
     }
 
@@ -1635,7 +1678,7 @@ class AgentRuntime:
             "BRAIN acceptance criteria:\n"
             f"  Sharpe >= {criteria.min_sharpe}, Fitness >= {criteria.min_fitness}, "
             f"Turnover <= {criteria.max_turnover}\n\n"
-            "Available operators: rank, ts_corr, ts_delta, ts_mean, ts_std, ts_sum, ts_max, ts_min, "
+            "Available operators: rank, ts_corr, ts_delta, ts_mean, ts_std_dev, ts_sum, ts_max, ts_min, "
             "ts_returns, ts_delay, ts_rank, ts_argmax, ts_argmin, ts_product, "
             "group_rank, group_neutralize, trade_when, ts_regression, vector_neut, "
             "ts_decay_exp_window, signed_power, ts_quantile, abs, log, sign, power.\n"
@@ -1894,7 +1937,7 @@ class AgentRuntime:
         # Gather recently failed expressions so the LLM avoids repeating them
         recent_experiments = self.store.list_recent_experiments(limit=20)
         failed_expressions = [
-            e["alpha_expression"]
+            normalize_fastexpr_operators(e["alpha_expression"])
             for e in recent_experiments
             if e.get("status") == "rejected" and e.get("alpha_expression")
         ][:10]
@@ -1910,7 +1953,7 @@ class AgentRuntime:
             lines = []
             for e in best_examples:
                 lines.append(
-                    f"  - {e.get('alpha_expression')} → sharpe={e.get('sharpe')}, "
+                    f"  - {normalize_fastexpr_operators(e.get('alpha_expression', ''))} → sharpe={e.get('sharpe')}, "
                     f"fitness={e.get('fitness')}, turnover={e.get('turnover')}"
                 )
             best_text = "\nBest historical expressions (learn from these):\n" + "\n".join(lines)
@@ -1938,7 +1981,7 @@ class AgentRuntime:
             "ACCEPTANCE CRITERIA (all must pass simultaneously):\n"
             f"  Sharpe >= {criteria.min_sharpe}, Fitness >= {criteria.min_fitness}, "
             f"Turnover <= {criteria.max_turnover}\n\n"
-            "BRAIN FASTEXPR operators: rank, ts_corr, ts_delta, ts_mean, ts_std, ts_sum, "
+            "BRAIN FASTEXPR operators: rank, ts_corr, ts_delta, ts_mean, ts_std_dev, ts_sum, "
             "ts_max, ts_min, ts_returns, ts_delay, ts_rank, ts_argmax, ts_argmin, ts_product, "
             "group_rank, group_neutralize, trade_when, ts_regression, vector_neut, "
             "ts_decay_exp_window, signed_power, ts_quantile, humpdecay, "
@@ -1981,7 +2024,7 @@ class AgentRuntime:
         return {
             "name": item.get("name", "agent_alpha"),
             "category": item.get("category", "research"),
-            "expression": item.get("expression", "rank(close - vwap)"),
+            "expression": normalize_fastexpr_operators(item.get("expression", "rank(close - vwap)")),
             "type": item.get("type", "regular"),
             "params": item.get("params", {}),
         }
@@ -2386,14 +2429,15 @@ class AgentRuntime:
 def extract_json(text: str) -> str:
     if not text:
         return "[]"
-    start = text.find("[")
-    end = text.rfind("]")
-    if start != -1 and end != -1 and end > start:
-        return text[start : end + 1]
-    start = text.find("{")
-    end = text.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        return text[start : end + 1]
+    decoder = json.JSONDecoder()
+    for start, char in enumerate(text):
+        if char not in "[{":
+            continue
+        try:
+            _, end = decoder.raw_decode(text[start:])
+        except json.JSONDecodeError:
+            continue
+        return text[start : start + end]
     raise ValueError("No JSON payload found")
 
 

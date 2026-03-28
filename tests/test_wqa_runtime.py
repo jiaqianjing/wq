@@ -1,11 +1,15 @@
 from pathlib import Path
 
+from wq_brain.alpha_generator import AlphaGenerator
 from wq_brain.agent_runtime import (
+    AnthropicProvider,
     RuntimeStore,
     SiliconFlowProvider,
     create_llm_provider,
     describe_llm_profile,
+    extract_json,
     init_runtime_config,
+    normalize_fastexpr_operators,
     read_config_snapshot,
     read_log_tail,
     runtime_status,
@@ -17,6 +21,7 @@ def test_init_runtime_config_uses_parent_directory(tmp_path: Path) -> None:
     init_runtime_config(config_path, force=True)
     text = config_path.read_text(encoding="utf-8")
     assert "state_dir: ./.wqa-smoke" in text
+    assert "model_name: claude-opus-4-20250514" in text
 
 
 def test_runtime_store_deduplicates_ideas(tmp_path: Path) -> None:
@@ -137,3 +142,55 @@ def test_describe_llm_profile_reports_siliconflow_model() -> None:
         "model_name": "moonshotai/Kimi-K2-Thinking",
         "base_url": "https://api.siliconflow.cn/v1",
     }
+
+
+def test_create_llm_provider_normalizes_anthropic_model_alias() -> None:
+    config = {
+        "providers": {
+            "anth": {
+                "provider": "anthropic",
+                "model_name": "claude-opus-4",
+                "api_key": "demo-key",
+                "base_url": "https://api.anthropic.com",
+            }
+        }
+    }
+    provider = create_llm_provider(config, "anth")
+    assert isinstance(provider, AnthropicProvider)
+    assert provider.model_name == "claude-opus-4-20250514"
+
+    info = describe_llm_profile(config, "anth", provider)
+    assert info == {
+        "profile": "anth",
+        "provider": "anthropic",
+        "model_name": "claude-opus-4-20250514",
+        "base_url": "https://api.anthropic.com",
+    }
+
+
+def test_extract_json_ignores_surrounding_text() -> None:
+    raw = """Here is the strategy summary.
+
+```json
+{"headline":"focus hybrid signals","winning_patterns":["rank + ts_mean"]}
+```
+
+Additional notes follow.
+"""
+    assert extract_json(raw) == '{"headline":"focus hybrid signals","winning_patterns":["rank + ts_mean"]}'
+
+
+def test_alpha_templates_use_supported_std_operator() -> None:
+    generator = AlphaGenerator()
+    templates = (
+        generator.regular_templates
+        + generator.power_pool_templates
+        + generator.atom_templates
+        + generator.superalpha_templates
+    )
+    assert all("ts_std(" not in template.expression for template in templates)
+
+
+def test_normalize_fastexpr_operators_rewrites_legacy_aliases() -> None:
+    expression = "rank(ts_std(close, 20)) + ts_std (returns, 5)"
+    assert normalize_fastexpr_operators(expression) == "rank(ts_std_dev(close, 20)) + ts_std_dev (returns, 5)"

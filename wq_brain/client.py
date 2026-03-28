@@ -16,6 +16,35 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+TERMINAL_SIMULATION_FAILURE_STATUSES = {
+    "ABORTED",
+    "CANCELLED",
+    "ERROR",
+    "FAILED",
+    "FAILURE",
+}
+
+
+def extract_simulation_error_message(payload: Dict[str, Any]) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    fields = [
+        payload.get("message"),
+        payload.get("error"),
+        payload.get("detail"),
+        payload.get("statusDescription"),
+        payload.get("status_description"),
+    ]
+    for value in fields:
+        if isinstance(value, dict):
+            nested = value.get("message") or value.get("detail") or value.get("error")
+            if nested:
+                return str(nested).strip()
+        if value:
+            return str(value).strip()
+    return ""
+
+
 class Region(Enum):
     """支持的交易区域"""
     GLB = "GLB"
@@ -498,6 +527,27 @@ class WorldQuantBrainClient:
                         return self._get_alpha_result(alpha_id)
 
                     status = str(data.get("status", "")).upper()
+                    if status in TERMINAL_SIMULATION_FAILURE_STATUSES:
+                        error_message = extract_simulation_error_message(data) or f"模拟失败，状态={status}"
+                        logger.warning(
+                            "模拟失败，停止轮询... poll=%d elapsed=%.1fs status=%s error=%s",
+                            poll_count,
+                            time.time() - start_time,
+                            status,
+                            error_message,
+                        )
+                        return SimulateResult(
+                            alpha_id="",
+                            status=status,
+                            sharpe=0,
+                            fitness=0,
+                            turnover=0,
+                            returns=0,
+                            drawdown=0,
+                            margin=0,
+                            is_submittable=False,
+                            error_message=error_message,
+                        )
                     if status and status not in ["COMPLETE", "PASS", "FAIL"]:
                         if poll_count == 1 or poll_count % 12 == 0:
                             logger.info(

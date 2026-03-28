@@ -31,6 +31,11 @@ providers:
     model_name: deepseek-ai/DeepSeek-V3  # SiliconFlow 模型名
     api_key: ${SILICONFLOW_API_KEY}
     base_url: https://api.siliconflow.cn/v1  # OpenAI-compatible 端点
+  anthropic:
+    provider: anthropic
+    model_name: claude-opus-4-20250514  # Anthropic 建议使用显式快照模型名
+    api_key: ${ANTHROPIC_API_KEY}
+    base_url: https://api.anthropic.com
 
 agents:
   researcher:
@@ -96,6 +101,7 @@ sources:
 GEMINI_API_KEY=your_key
 KIMI_API_KEY=your_key
 SILICONFLOW_API_KEY=your_key
+ANTHROPIC_API_KEY=your_key
 WQB_USERNAME=your_email
 WQB_PASSWORD=your_password
 TG_BOT_TOKEN=your_bot_token
@@ -109,6 +115,7 @@ TG_CHAT_ID=your_chat_id
 - `gemini` → `GeminiProvider`（Google Gemini generateContent API）
 - `kimi` → `KimiProvider`（OpenAI-compatible chat/completions，需要 `base_url`）
 - `siliconflow` → `SiliconFlowProvider`（OpenAI-compatible chat/completions，默认 `https://api.siliconflow.cn/v1`）
+- `anthropic` → `AnthropicProvider`（Anthropic Messages API，建议配置显式快照模型名）
 
 然后在 `agents` 段的 `llm_profile` 引用新 key 即可。
 
