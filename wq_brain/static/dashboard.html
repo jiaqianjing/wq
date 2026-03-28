@@ -7,149 +7,144 @@
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#0b0e14;--surface:#13171f;--surface2:#1a1f2b;--border:#252a36;
-  --text:#e2e8f0;--text2:#8b95a8;--text3:#5a6478;
-  --accent:#6ee7b7;--accent2:#38bdf8;--warn:#fbbf24;--bad:#f87171;
-  --good:#4ade80;
-  --radius:12px;--radius-sm:8px;
+  --bg:#0a0c10;--surface:#12151c;--surface2:#181c25;--border:#222733;
+  --text:#d8dee9;--text2:#7b849a;--text3:#4c5468;
+  --accent:#5eead4;--accent2:#38bdf8;--purple:#a78bfa;
+  --good:#34d399;--bad:#f87171;--warn:#fbbf24;
+  --radius:10px;--radius-sm:6px;
 }
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);line-height:1.5;min-height:100vh}
 a{color:var(--accent2);text-decoration:none}
 
-/* Layout */
-.shell{display:grid;grid-template-columns:220px 1fr;grid-template-rows:56px 1fr;min-height:100vh}
-.topbar{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;padding:0 24px;background:var(--surface);border-bottom:1px solid var(--border);z-index:10}
-.topbar h1{font-size:16px;font-weight:700;letter-spacing:-.02em}
-.topbar h1 span{color:var(--accent);font-weight:800}
-.topbar-right{display:flex;align-items:center;gap:16px}
-.topbar-right .dot{width:8px;height:8px;border-radius:50%;background:var(--accent);animation:pulse 2s infinite}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-.topbar-right .ts{font-size:12px;color:var(--text2);font-family:monospace}
+.shell{display:grid;grid-template-columns:200px 1fr;grid-template-rows:48px 1fr;min-height:100vh}
+.topbar{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;padding:0 20px;background:var(--surface);border-bottom:1px solid var(--border)}
+.topbar h1{font-size:14px;font-weight:700;letter-spacing:-.01em}
+.topbar h1 span{color:var(--accent)}
+.topbar .ts{font-size:11px;color:var(--text3);font-family:monospace}
+.topbar .dot{width:6px;height:6px;border-radius:50%;background:var(--accent);display:inline-block;margin-right:8px;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 
-.sidebar{background:var(--surface);border-right:1px solid var(--border);padding:16px 0;overflow-y:auto}
-.sidebar .nav-group{padding:0 12px;margin-bottom:20px}
-.sidebar .nav-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text3);padding:0 12px;margin-bottom:8px}
-.nav-item{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:var(--radius-sm);font-size:13px;font-weight:500;color:var(--text2);cursor:pointer;transition:all .15s}
+.sidebar{background:var(--surface);border-right:1px solid var(--border);padding:12px 0;overflow-y:auto}
+.nav-group{padding:0 8px;margin-bottom:16px}
+.nav-label{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:var(--text3);padding:0 10px;margin-bottom:6px}
+.nav-item{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:var(--radius-sm);font-size:12px;font-weight:500;color:var(--text2);cursor:pointer;transition:all .15s}
 .nav-item:hover{background:rgba(255,255,255,.04);color:var(--text)}
-.nav-item.active{background:rgba(110,231,183,.08);color:var(--accent)}
-.nav-item .icon{width:18px;text-align:center;font-size:14px}
-.nav-item .count{margin-left:auto;font-size:11px;font-weight:700;padding:2px 7px;border-radius:99px;background:rgba(255,255,255,.06);color:var(--text2)}
+.nav-item.active{background:rgba(94,234,212,.08);color:var(--accent)}
+.nav-item .ct{margin-left:auto;font-size:10px;font-weight:700;padding:1px 6px;border-radius:99px;background:rgba(255,255,255,.06);color:var(--text3)}
 
-.content{padding:24px;overflow-y:auto}
+.content{padding:20px;overflow-y:auto}
 
 /* Cards */
-.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px;transition:border-color .2s}
-.card:hover{border-color:rgba(110,231,183,.2)}
-.card-title{font-size:13px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between}
-.card-title .badge{font-size:11px;padding:3px 8px;border-radius:99px;background:rgba(110,231,183,.1);color:var(--accent);font-weight:700;text-transform:none;letter-spacing:0}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px}
+.card-t{font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between}
+.badge{font-size:10px;padding:2px 7px;border-radius:99px;background:rgba(94,234,212,.1);color:var(--accent);font-weight:700;text-transform:none;letter-spacing:0}
 
-/* Stats row */
-.stats-row{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:20px}
-.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px}
-.stat-card .label{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.08em;font-weight:600}
-.stat-card .val{font-size:28px;font-weight:800;letter-spacing:-.03em;margin-top:6px}
-.stat-card .sub{font-size:12px;color:var(--text2);margin-top:4px}
-.stat-card.highlight{border-color:rgba(110,231,183,.25);background:linear-gradient(135deg,rgba(110,231,183,.04),transparent)}
-.stat-card.highlight .val{color:var(--accent)}
+/* Stat row */
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:16px}
+.st{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px}
+.st .l{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.08em;font-weight:600}
+.st .v{font-size:24px;font-weight:800;letter-spacing:-.02em;margin-top:4px}
+.st .s{font-size:11px;color:var(--text2);margin-top:2px}
+.st.hi{border-color:rgba(94,234,212,.25)}.st.hi .v{color:var(--accent)}
 
-/* Grid layouts */
-.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
-.grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
-.grid-main{display:grid;grid-template-columns:1.5fr 1fr;gap:16px}
-.stack{display:grid;gap:16px}
-.mb{margin-bottom:16px}
+/* Grid */
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+.gm{display:grid;grid-template-columns:3fr 2fr;gap:12px}
+.mb{margin-bottom:12px}
 
 /* Table */
-.tbl{width:100%;border-collapse:collapse;font-size:13px}
-.tbl th{text-align:left;font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;padding:8px 10px;border-bottom:1px solid var(--border)}
-.tbl td{padding:10px;border-bottom:1px solid rgba(255,255,255,.03);vertical-align:top}
+.tbl{width:100%;border-collapse:collapse;font-size:12px}
+.tbl th{text-align:left;font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;padding:6px 8px;border-bottom:1px solid var(--border)}
+.tbl td{padding:8px;border-bottom:1px solid rgba(255,255,255,.03);vertical-align:top}
 .tbl tr:last-child td{border-bottom:0}
-.tbl tr:hover td{background:rgba(255,255,255,.02)}
+.tbl tr:hover td{background:rgba(255,255,255,.015)}
 
 /* Chips */
-.chip{display:inline-flex;align-items:center;padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600;gap:5px}
-.chip-default{background:rgba(255,255,255,.06);color:var(--text2)}
-.chip-good{background:rgba(74,222,128,.1);color:var(--good)}
-.chip-bad{background:rgba(248,113,113,.1);color:var(--bad)}
-.chip-warn{background:rgba(251,191,36,.1);color:var(--warn)}
-.chip-accent{background:rgba(110,231,183,.1);color:var(--accent)}
-.chip-blue{background:rgba(56,189,248,.1);color:var(--accent2)}
+.chip{display:inline-flex;align-items:center;padding:2px 7px;border-radius:99px;font-size:10px;font-weight:600}
+.c-d{background:rgba(255,255,255,.05);color:var(--text2)}
+.c-g{background:rgba(52,211,153,.1);color:var(--good)}
+.c-b{background:rgba(248,113,113,.1);color:var(--bad)}
+.c-w{background:rgba(251,191,36,.1);color:var(--warn)}
+.c-a{background:rgba(94,234,212,.1);color:var(--accent)}
+.c-bl{background:rgba(56,189,248,.1);color:var(--accent2)}
+.c-p{background:rgba(167,139,250,.1);color:var(--purple)}
 
-/* Mono */
-.mono{font-family:"SF Mono",Menlo,monospace;font-size:12px}
-.muted{color:var(--text2)}
-.small{font-size:12px}
+.mono{font-family:"SF Mono",Menlo,monospace;font-size:11px}
+.muted{color:var(--text2)}.small{font-size:11px}
 
-/* Code block */
-.code-block{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px;font-family:"SF Mono",Menlo,monospace;font-size:12px;line-height:1.6;max-height:360px;overflow:auto;white-space:pre-wrap;word-break:break-word;color:var(--text2)}
+/* Code */
+.code{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;font-family:"SF Mono",Menlo,monospace;font-size:11px;line-height:1.6;max-height:320px;overflow:auto;white-space:pre-wrap;word-break:break-word;color:var(--text2)}
 
 /* Chart */
-.chart-wrap{height:200px;position:relative}
-.chart-wrap svg{width:100%;height:100%;display:block}
+.chart-w{height:180px;position:relative}.chart-w svg{width:100%;height:100%;display:block}
 
-/* Agent row */
-.agent-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.04)}
-.agent-row:last-child{border-bottom:0}
-.agent-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
-.agent-dot.running{background:var(--accent)}
-.agent-dot.idle{background:var(--text3)}
-.agent-dot.error{background:var(--bad)}
-.agent-info{flex:1;min-width:0}
-.agent-name{font-size:13px;font-weight:600}
-.agent-summary{font-size:12px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.agent-ts{font-size:11px;color:var(--text3);font-family:monospace;flex-shrink:0}
+/* Agent */
+.ag{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.04)}
+.ag:last-child{border-bottom:0}
+.ag-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.ag-dot.running{background:var(--accent);box-shadow:0 0 5px var(--accent)}
+.ag-dot.idle{background:var(--text3)}.ag-dot.error{background:var(--bad);box-shadow:0 0 5px var(--bad)}
+.ag-info{flex:1;min-width:0}
+.ag-n{font-size:12px;font-weight:600;text-transform:capitalize}
+.ag-s{font-size:11px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ag-t{font-size:10px;color:var(--text3);font-family:monospace;flex-shrink:0}
+
+/* Model comparison */
+.model-bar{display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:var(--radius-sm);background:rgba(255,255,255,.02);margin-bottom:6px;border:1px solid rgba(255,255,255,.04)}
+.model-bar:last-child{margin-bottom:0}
+.model-name{font-size:12px;font-weight:600;min-width:140px;color:var(--text)}
+.model-metrics{display:flex;gap:12px;flex:1;font-size:11px;color:var(--text2)}
+.model-metrics span{display:flex;align-items:center;gap:4px}
+.model-rate{font-size:13px;font-weight:700;min-width:48px;text-align:right}
+.rate-bar{height:4px;border-radius:2px;background:var(--border);flex:1;max-width:120px;overflow:hidden}
+.rate-fill{height:100%;border-radius:2px;background:var(--accent)}
+
+/* Strategy */
+.strat-banner{background:linear-gradient(135deg,rgba(167,139,250,.05),rgba(56,189,248,.03));border:1px solid rgba(167,139,250,.15);border-radius:var(--radius);padding:14px 16px;margin-bottom:12px}
+.strat-banner h3{font-size:12px;font-weight:700;color:var(--purple);margin-bottom:6px}
+.strat-banner p{font-size:12px;color:var(--text2);line-height:1.5}
+.strat-list{list-style:none;padding:0}.strat-list li{padding:6px 10px;border-radius:var(--radius-sm);background:rgba(255,255,255,.02);margin-bottom:4px;font-size:12px;color:var(--text2);border-left:3px solid var(--border)}
+.strat-list li.win{border-left-color:var(--good)}.strat-list li.lose{border-left-color:var(--bad)}.strat-list li.gap{border-left-color:var(--accent2)}.strat-list li.dir{border-left-color:var(--purple)}
+.strat-tags{display:flex;flex-wrap:wrap;gap:4px}
 
 /* Reflection */
-.ref-card{padding:14px;border-radius:var(--radius-sm);background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.04);margin-bottom:10px}
-.ref-card:last-child{margin-bottom:0}
-.ref-card h4{font-size:13px;font-weight:600;margin-bottom:8px}
-.ref-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
-.ref-block{padding:10px;border-radius:var(--radius-sm);background:rgba(255,255,255,.02)}
-.ref-block strong{display:block;font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;font-weight:700}
-.ref-block ul{margin:0;padding-left:16px;font-size:12px;color:var(--text2)}
-.ref-block li{margin-bottom:4px}
+.ref{padding:12px;border-radius:var(--radius-sm);background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.04);margin-bottom:8px}
+.ref:last-child{margin-bottom:0}
+.ref h4{font-size:12px;font-weight:600;margin-bottom:6px}
+.ref-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px}
+.ref-b{padding:8px;border-radius:var(--radius-sm);background:rgba(255,255,255,.02)}
+.ref-b strong{display:block;font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px;font-weight:700}
+.ref-b ul{margin:0;padding-left:14px;font-size:11px;color:var(--text2)}
+.ref-b li{margin-bottom:2px}
 
-/* KV row */
-.kv{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.04);font-size:13px}
+/* KV */
+.kv{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.04);font-size:12px}
 .kv:last-child{border-bottom:0}
-.kv .k{color:var(--text2)}
-.kv .v{font-weight:600}
+.kv .k{color:var(--text2)}.kv .v{font-weight:600}
 
 /* Pager */
-.pager{display:flex;align-items:center;justify-content:space-between;padding-top:10px;margin-top:10px;border-top:1px solid rgba(255,255,255,.04)}
-.pager-info{font-size:12px;color:var(--text3)}
-.pager-btns{display:flex;gap:6px}
-.pager-btns button{appearance:none;border:1px solid var(--border);border-radius:var(--radius-sm);padding:5px 12px;font-size:12px;font-weight:600;color:var(--text2);background:transparent;cursor:pointer}
+.pager{display:flex;align-items:center;justify-content:space-between;padding-top:8px;margin-top:8px;border-top:1px solid rgba(255,255,255,.04)}
+.pager-info{font-size:11px;color:var(--text3)}
+.pager-btns{display:flex;gap:4px}
+.pager-btns button{appearance:none;border:1px solid var(--border);border-radius:var(--radius-sm);padding:4px 10px;font-size:11px;font-weight:600;color:var(--text2);background:transparent;cursor:pointer}
 .pager-btns button:hover:not(:disabled){background:rgba(255,255,255,.04);color:var(--text)}
 .pager-btns button:disabled{opacity:.3;cursor:not-allowed}
 
-/* Empty */
-.empty{padding:32px;text-align:center;color:var(--text3);font-size:13px;border:1px dashed var(--border);border-radius:var(--radius-sm)}
+.empty{padding:24px;text-align:center;color:var(--text3);font-size:12px;border:1px dashed var(--border);border-radius:var(--radius-sm)}
 
-/* Scroll */
-.scroll{max-height:420px;overflow-y:auto}
+/* Error */
+.err-b{background:rgba(248,113,113,.06);border:1px solid rgba(248,113,113,.2);border-radius:var(--radius);padding:10px 14px;margin-bottom:12px;display:flex;gap:8px}
+.err-b .eb-t{font-size:12px;font-weight:700;color:var(--bad)}.err-b .eb-m{font-size:11px;color:var(--text2);margin-top:2px}
 
-/* Error banner */
-.error-banner{background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.3);border-radius:var(--radius);padding:12px 16px;margin-bottom:16px;display:flex;align-items:start;gap:10px}
-.error-banner .eb-icon{font-size:16px;flex-shrink:0;line-height:1.4}
-.error-banner .eb-body{flex:1;min-width:0}
-.error-banner .eb-title{font-size:13px;font-weight:700;color:var(--bad)}
-.error-banner .eb-msg{font-size:12px;color:var(--text2);margin-top:4px;word-break:break-word}
-.error-banner .eb-time{font-size:11px;color:var(--text3);font-family:monospace;margin-top:4px}
+.section{display:none}.section.active{display:block}
 
-/* Section */
-.section{display:none}
-.section.active{display:block}
-
-/* Responsive */
 @media(max-width:900px){
-  .shell{grid-template-columns:1fr;grid-template-rows:56px auto 1fr}
-  .sidebar{display:flex;overflow-x:auto;border-right:0;border-bottom:1px solid var(--border);padding:8px 12px}
-  .sidebar .nav-group{display:flex;gap:4px;margin:0;padding:0}
-  .sidebar .nav-label{display:none}
-  .nav-item{white-space:nowrap;padding:6px 12px}
-  .stats-row{grid-template-columns:repeat(2,1fr)}
-  .grid-2,.grid-3,.grid-main{grid-template-columns:1fr}
+  .shell{grid-template-columns:1fr;grid-template-rows:48px auto 1fr}
+  .sidebar{display:flex;overflow-x:auto;border-right:0;border-bottom:1px solid var(--border);padding:6px 8px}
+  .nav-group{display:flex;gap:4px;margin:0;padding:0}.nav-label{display:none}
+  .nav-item{white-space:nowrap;padding:5px 10px}
+  .stats{grid-template-columns:repeat(2,1fr)}.g2,.g3,.gm{grid-template-columns:1fr}
 }
 </style>
 </head>
@@ -157,288 +152,283 @@ a{color:var(--accent2);text-decoration:none}
 <div class="shell">
   <header class="topbar">
     <h1><span>WQA</span> Dashboard</h1>
-    <div class="topbar-right">
-      <div class="dot"></div>
-      <span class="ts" id="clock"></span>
-    </div>
+    <div style="display:flex;align-items:center;gap:12px"><span class="dot"></span><span class="ts" id="clock"></span></div>
   </header>
-
   <nav class="sidebar">
     <div class="nav-group">
       <div class="nav-label">Monitor</div>
-      <div class="nav-item active" data-section="overview"><span class="icon">◉</span>Overview</div>
-      <div class="nav-item" data-section="ideas"><span class="icon">◈</span>Ideas<span class="count" id="navIdeaCount">0</span></div>
-      <div class="nav-item" data-section="experiments"><span class="icon">◆</span>Experiments<span class="count" id="navExpCount">0</span></div>
-      <div class="nav-item" data-section="reflections"><span class="icon">◇</span>Reflections</div>
+      <div class="nav-item active" data-s="overview">Overview</div>
+      <div class="nav-item" data-s="ideas">Ideas<span class="ct" id="nI">0</span></div>
+      <div class="nav-item" data-s="experiments">Experiments<span class="ct" id="nE">0</span></div>
+    </div>
+    <div class="nav-group">
+      <div class="nav-label">Intelligence</div>
+      <div class="nav-item" data-s="models">Models</div>
+      <div class="nav-item" data-s="strategy">Strategy</div>
+      <div class="nav-item" data-s="reflections">Reflections</div>
     </div>
     <div class="nav-group">
       <div class="nav-label">System</div>
-      <div class="nav-item" data-section="events"><span class="icon">▸</span>Events<span class="count" id="navEventCount">0</span></div>
-      <div class="nav-item" data-section="ops"><span class="icon">⚙</span>Config & Logs</div>
+      <div class="nav-item" data-s="events">Events<span class="ct" id="nEv">0</span></div>
+      <div class="nav-item" data-s="ops">Ops</div>
     </div>
   </nav>
-
   <main class="content">
 
-    <!-- OVERVIEW -->
     <div class="section active" id="sec-overview">
-      <div id="errorBanner"></div>
-      <div class="stats-row" id="statsRow"></div>
-      <div class="grid-main mb">
-        <div class="card">
-          <div class="card-title">Sharpe Trend</div>
-          <div class="chart-wrap" id="trendChart"></div>
-        </div>
-        <div class="card">
-          <div class="card-title">Status Distribution</div>
-          <div class="chart-wrap" id="mixChart"></div>
-        </div>
+      <div id="errB"></div>
+      <div id="stratB"></div>
+      <div class="stats" id="statsR"></div>
+      <div class="gm mb">
+        <div class="card"><div class="card-t">Sharpe Trend</div><div class="chart-w" id="trendC"></div></div>
+        <div class="card"><div class="card-t">Status</div><div class="chart-w" id="mixC"></div></div>
       </div>
-      <div class="grid-2">
-        <div class="card">
-          <div class="card-title">Agents</div>
-          <div id="agents"></div>
-        </div>
-        <div class="card">
-          <div class="card-title">Best Experiment</div>
-          <div id="best"></div>
-        </div>
+      <div class="g2">
+        <div class="card"><div class="card-t">Agents</div><div id="agents"></div></div>
+        <div class="card"><div class="card-t">Best Experiment</div><div id="best"></div></div>
       </div>
     </div>
 
-    <!-- IDEAS -->
     <div class="section" id="sec-ideas">
-      <div class="card">
-        <div class="card-title">Idea Queue <span class="badge" id="ideaCount">0</span></div>
-        <div id="ideas"></div>
-      </div>
+      <div class="card"><div class="card-t">Idea Queue <span class="badge" id="iC">0</span></div><div id="ideas"></div></div>
     </div>
 
-    <!-- EXPERIMENTS -->
     <div class="section" id="sec-experiments">
-      <div class="grid-main">
-        <div class="card">
-          <div class="card-title">Experiments <span class="badge" id="experimentCount">0</span></div>
-          <div id="experiments"></div>
-        </div>
-        <div class="card">
-          <div class="card-title">Feedback Loop <span class="badge" id="feedbackCount">0</span></div>
-          <div id="feedback"></div>
-        </div>
+      <div class="gm">
+        <div class="card"><div class="card-t">Experiments <span class="badge" id="eC">0</span></div><div id="exps"></div></div>
+        <div class="card"><div class="card-t">Feedback <span class="badge" id="fC">0</span></div><div id="fb"></div></div>
       </div>
     </div>
 
-    <!-- REFLECTIONS -->
+    <div class="section" id="sec-models">
+      <div class="card mb"><div class="card-t">Model Comparison (Research)</div><div id="modelCmp"></div></div>
+      <div class="card"><div class="card-t">Ideas by Model</div><div id="modelIdeas"></div></div>
+    </div>
+
+    <div class="section" id="sec-strategy"><div id="stratFull"></div></div>
+
     <div class="section" id="sec-reflections">
-      <div class="card">
-        <div class="card-title">Researcher Reflections</div>
-        <div id="reflections"></div>
-      </div>
+      <div class="card"><div class="card-t">Researcher Reflections</div><div id="refs"></div></div>
     </div>
 
-    <!-- EVENTS -->
     <div class="section" id="sec-events">
-      <div class="card">
-        <div class="card-title">Event Log <span class="badge" id="eventCount">0</span></div>
-        <div id="events"></div>
-      </div>
+      <div class="card"><div class="card-t">Events <span class="badge" id="evC">0</span></div><div id="evts"></div></div>
     </div>
 
-    <!-- OPS -->
     <div class="section" id="sec-ops">
-      <div class="grid-2">
-        <div class="card">
-          <div class="card-title">Config Snapshot</div>
-          <pre class="code-block" id="configView">Loading...</pre>
-        </div>
-        <div class="card">
-          <div class="card-title">Log Tail</div>
-          <pre class="code-block" id="logView">Loading...</pre>
-        </div>
+      <div class="g2">
+        <div class="card"><div class="card-t">Config</div><pre class="code" id="cfgV">Loading...</pre></div>
+        <div class="card"><div class="card-t">Logs</div><pre class="code" id="logV">Loading...</pre></div>
       </div>
     </div>
 
   </main>
 </div>
 <script>
-const PS={ideas:6,experiments:6,feedback:6,events:8,reflections:3};
-const pg={ideas:0,experiments:0,feedback:0,events:0,reflections:0};
-let _data={};
-
-const $=s=>document.querySelector(s);
-const $$=s=>document.querySelectorAll(s);
+const PS={ideas:8,exps:8,fb:6,evts:10,refs:3};
+const pg={ideas:0,exps:0,fb:0,evts:0,refs:0};
+let D={};
+const $=s=>document.querySelector(s),$$=s=>document.querySelectorAll(s);
 const esc=v=>String(v??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 const api=p=>fetch(p).then(r=>r.json());
-
+const ts=v=>(v||"").replace("T"," ").slice(0,19);
 function clamp(k,n){const t=Math.max(Math.ceil(n/PS[k]),1);pg[k]=Math.min(Math.max(pg[k],0),t-1);return t}
 function paged(k,arr){const l=arr||[];clamp(k,l.length);const s=pg[k]*PS[k];return l.slice(s,s+PS[k])}
-function pager(k,n){const t=clamp(k,n);if(t<=1)return"";const c=pg[k];return`<div class="pager"><span class="pager-info">${c+1}/${t} · ${n} total</span><div class="pager-btns"><button data-pg="${k}" data-d="-1" ${c===0?"disabled":""}>‹ Prev</button><button data-pg="${k}" data-d="1" ${c>=t-1?"disabled":""}>Next ›</button></div></div>`}
-function chip(s){const v=esc(s||"unknown"),cl={"promising":"chip-good","accepted":"chip-good","submitted":"chip-good","rejected":"chip-bad","error":"chip-bad","blocked":"chip-bad","queued":"chip-accent","engineering":"chip-blue","running":"chip-accent","idle":"chip-default","tested":"chip-warn"}[v.toLowerCase()]||"chip-default";return`<span class="chip ${cl}">${v}</span>`}
+function pgr(k,n){const t=clamp(k,n);if(t<=1)return"";const c=pg[k];return`<div class="pager"><span class="pager-info">${c+1}/${t}</span><div class="pager-btns"><button data-pg="${k}" data-d="-1" ${c===0?"disabled":""}>&lsaquo;</button><button data-pg="${k}" data-d="1" ${c>=t-1?"disabled":""}>&rsaquo;</button></div></div>`}
+function chip(s){const v=esc(s||"?"),m={"promising":"c-g","accepted":"c-g","submitted":"c-g","rejected":"c-b","error":"c-b","blocked":"c-b","queued":"c-a","engineering":"c-bl","running":"c-a","idle":"c-d","tested":"c-w","reviewing":"c-bl"};return`<span class="chip ${m[v.toLowerCase()]||"c-d"}">${v}</span>`}
+function modelChip(m){if(!m)return`<span class="chip c-d">unknown</span>`;const short=m.includes(":")?m.split(":")[1]:m;return`<span class="chip c-bl">${esc(short)}</span>`}
 
-function renderStats(sum){
-  const c=sum.counts||{},is=sum.idea_status||{},es=sum.experiment_status||{},b=sum.best_experiment||{};
-  const items=[
-    {l:"Sources",v:c.sources||0,s:"External inputs collected",h:false},
-    {l:"Ideas",v:c.ideas||0,s:`${is.queued||0} queued · ${is.engineering||0} eng`,h:false},
-    {l:"Experiments",v:c.experiments||0,s:`${es.promising||0} promising · ${es.rejected||0} rej`,h:false},
-    {l:"Best Sharpe",v:b.sharpe??"-",s:esc(b.idea_title||"No data yet"),h:true},
-    {l:"Events",v:c.events||0,s:"Runtime actions logged",h:false},
-  ];
-  $("#statsRow").innerHTML=items.map(i=>`<div class="stat-card${i.h?" highlight":""}"><div class="label">${i.l}</div><div class="val">${i.v}</div><div class="sub">${i.s}</div></div>`).join("");
+function rStats(s){
+  const c=s.counts||{},is=s.idea_status||{},es=s.experiment_status||{},b=s.best_experiment||{};
+  $("#statsR").innerHTML=[
+    {l:"Sources",v:c.sources||0,s:`collected`,h:0},
+    {l:"Ideas",v:c.ideas||0,s:`${is.queued||0} queued`,h:0},
+    {l:"Experiments",v:c.experiments||0,s:`${es.promising||0} promising / ${es.rejected||0} rej`,h:0},
+    {l:"Best Sharpe",v:b.sharpe??"-",s:esc((b.idea_title||"").slice(0,40)),h:1},
+    {l:"Submitted",v:(es.submitted||0)+(es.accepted||0),s:"to WorldQuant",h:0},
+  ].map(i=>`<div class="st${i.h?" hi":""}"><div class="l">${i.l}</div><div class="v">${i.v}</div><div class="s">${i.s}</div></div>`).join("");
 }
-
-function renderTrend(exps){
-  const vals=(exps||[]).slice().reverse().map((e,i)=>({x:i,y:Number(e.sharpe||0),n:e.alpha_name||""}));
-  if(!vals.length){$("#trendChart").innerHTML=`<div class="empty">No experiments yet</div>`;return}
-  const W=600,H=200,px=40,py=24;
-  const ys=vals.map(v=>v.y),mn=Math.min(...ys,0),mx=Math.max(...ys,1),rng=Math.max(mx-mn,.5);
-  const xStep=vals.length===1?0:(W-px*2)/(vals.length-1);
-  const pts=vals.map((v,i)=>{const x=px+i*xStep,y=H-py-((v.y-mn)/rng)*(H-py*2);return{...v,px:x,py:y}});
+function rTrend(ex){
+  const vals=(ex||[]).slice().reverse().map((e,i)=>({x:i,y:+(e.sharpe||0),n:e.alpha_name||""}));
+  if(!vals.length){$("#trendC").innerHTML=`<div class="empty">No data</div>`;return}
+  const W=560,H=180,px=36,py=20,ys=vals.map(v=>v.y),mn=Math.min(...ys,0),mx=Math.max(...ys,1),rng=Math.max(mx-mn,.5);
+  const xS=vals.length===1?0:(W-px*2)/(vals.length-1);
+  const pts=vals.map((v,i)=>{const x=px+i*xS,y=H-py-((v.y-mn)/rng)*(H-py*2);return{...v,px:x,py:y}});
   const path=pts.map((p,i)=>`${i?"L":"M"}${p.px.toFixed(1)} ${p.py.toFixed(1)}`).join(" ");
   const zY=(H-py-((0-mn)/rng)*(H-py*2)).toFixed(1);
-  const area=path+` L${pts[pts.length-1].px.toFixed(1)} ${H-py} L${pts[0].px.toFixed(1)} ${H-py} Z`;
-  $("#trendChart").innerHTML=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
-    <defs><linearGradient id="gf" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="rgba(110,231,183,.2)"/><stop offset="100%" stop-color="rgba(110,231,183,0)"/></linearGradient></defs>
-    <line x1="${px}" y1="${zY}" x2="${W-px}" y2="${zY}" stroke="rgba(255,255,255,.08)" stroke-dasharray="4 4"/>
-    <path d="${area}" fill="url(#gf)"/>
-    <path d="${path}" fill="none" stroke="#6ee7b7" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-    ${pts.map(p=>`<circle cx="${p.px.toFixed(1)}" cy="${p.py.toFixed(1)}" r="3.5" fill="#38bdf8"/>`).join("")}
-  </svg>`;
+  const area=path+` L${pts.at(-1).px.toFixed(1)} ${H-py} L${pts[0].px.toFixed(1)} ${H-py} Z`;
+  $("#trendC").innerHTML=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+    <defs><linearGradient id="gf" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="rgba(94,234,212,.18)"/><stop offset="100%" stop-color="rgba(94,234,212,0)"/></linearGradient></defs>
+    <line x1="${px}" y1="${zY}" x2="${W-px}" y2="${zY}" stroke="rgba(255,255,255,.06)" stroke-dasharray="3 3"/>
+    <path d="${area}" fill="url(#gf)"/><path d="${path}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    ${pts.map(p=>`<circle cx="${p.px.toFixed(1)}" cy="${p.py.toFixed(1)}" r="3" fill="var(--accent2)"/>`).join("")}</svg>`;
+}
+function rMix(s){
+  const is=s.idea_status||{},es=s.experiment_status||{};
+  const bars=[{l:"Queued",v:is.queued||0,c:"var(--accent)"},{l:"Eng",v:is.engineering||0,c:"var(--accent2)"},{l:"Promising",v:es.promising||0,c:"var(--good)"},{l:"Rejected",v:es.rejected||0,c:"var(--bad)"},{l:"Submitted",v:(es.submitted||0)+(es.accepted||0),c:"var(--purple)"}];
+  const mx=Math.max(...bars.map(b=>b.v),1),W=560,H=180,px=24,py=24,pw=W-px*2,gap=12,bw=(pw-gap*(bars.length-1))/bars.length;
+  $("#mixC").innerHTML=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+    ${bars.map((b,i)=>{const h=(b.v/mx)*(H-py*2),x=px+i*(bw+gap),y=H-py-h;return`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="4" fill="${b.c}" opacity=".8"/><text x="${(x+bw/2).toFixed(1)}" y="${(y-5).toFixed(1)}" text-anchor="middle" fill="var(--text2)" font-size="10" font-weight="600">${b.v}</text><text x="${(x+bw/2).toFixed(1)}" y="${(H-7).toFixed(1)}" text-anchor="middle" fill="var(--text3)" font-size="9">${b.l}</text>`}).join("")}</svg>`;
+}
+function rAgents(items){
+  if(!items||!items.length){$("#agents").innerHTML=`<div class="empty">No heartbeat</div>`;return}
+  const order=["researcher","engineer","reviewer","analyst"];
+  const sorted=[...order.map(n=>items.find(a=>a.agent_name===n)).filter(Boolean),...items.filter(a=>!order.includes(a.agent_name))];
+  $("#agents").innerHTML=sorted.map(a=>{const st=(a.state||"idle").toLowerCase();return`<div class="ag"><div class="ag-dot ${st}"></div><div class="ag-info"><div class="ag-n">${esc(a.agent_name)}</div><div class="ag-s">${esc(a.summary||"\u2014")}</div></div><span class="ag-t">${ts(a.last_heartbeat)}</span>${chip(a.state)}</div>`}).join("");
+}
+function rBest(b){
+  if(!b){$("#best").innerHTML=`<div class="empty">No data</div>`;return}
+  $("#best").innerHTML=[["Idea",b.idea_title],["Alpha",b.alpha_name],["Sharpe",b.sharpe],["Fitness",b.fitness],["Turnover",b.turnover]].map(([k,v])=>`<div class="kv"><span class="k">${k}</span><span class="v">${esc(v??"-")}</span></div>`).join("")+`<div class="kv"><span class="k">Status</span>${chip(b.status)}</div>`;
+}
+function rStratBanner(st){
+  if(!st||!st.headline){$("#stratB").innerHTML="";return}
+  const dirs=(st.strategic_directions||[]).slice(0,2);
+  $("#stratB").innerHTML=`<div class="strat-banner"><h3>Analyst Strategy</h3><p>${esc(st.headline)}</p>${dirs.length?`<ul style="margin-top:6px;padding-left:16px;font-size:11px;color:var(--text2)">${dirs.map(d=>`<li>${esc(d)}</li>`).join("")}</ul>`:""}</div>`;
 }
 
-function renderMix(sum){
-  const is=sum.idea_status||{},es=sum.experiment_status||{};
-  const bars=[
-    {l:"Queued",v:is.queued||0,c:"#6ee7b7"},
-    {l:"Engineering",v:is.engineering||0,c:"#38bdf8"},
-    {l:"Promising",v:es.promising||0,c:"#4ade80"},
-    {l:"Rejected",v:es.rejected||0,c:"#f87171"},
-    {l:"Accepted",v:es.accepted||0,c:"#fbbf24"},
-  ];
-  const mx=Math.max(...bars.map(b=>b.v),1),W=600,H=200,px=30,py=28,pw=W-px*2,ph=H-py*2,gap=14,bw=(pw-gap*(bars.length-1))/bars.length;
-  $("#mixChart").innerHTML=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
-    ${bars.map((b,i)=>{const h=(b.v/mx)*ph,x=px+i*(bw+gap),y=H-py-h;return`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="6" fill="${b.c}" opacity=".85"/><text x="${(x+bw/2).toFixed(1)}" y="${(y-6).toFixed(1)}" text-anchor="middle" fill="#8b95a8" font-size="11" font-weight="600">${b.v}</text><text x="${(x+bw/2).toFixed(1)}" y="${(H-8).toFixed(1)}" text-anchor="middle" fill="#5a6478" font-size="10">${b.l}</text>`}).join("")}
-  </svg>`;
+function rIdeas(items){
+  const list=items||[],vis=paged("ideas",list);
+  if(!list.length){$("#ideas").innerHTML=`<div class="empty">No ideas</div>`;return}
+  let h=`<table class="tbl"><thead><tr><th>Title</th><th>Model</th><th>Source</th><th>Status</th><th>Created</th></tr></thead><tbody>`;
+  vis.forEach(i=>{h+=`<tr><td><strong style="font-size:12px">${esc(i.title)}</strong><div class="small muted" style="margin-top:3px;max-width:360px">${esc((i.summary||"").slice(0,120))}</div></td><td>${modelChip(i.llm_model)}</td><td class="small muted">${esc(i.source_kind||"-")}</td><td>${chip(i.status)}</td><td class="mono small">${ts(i.created_at)}</td></tr>`});
+  h+=`</tbody></table>${pgr("ideas",list.length)}`;
+  $("#ideas").innerHTML=h;
+  $("#iC").textContent=list.length;$("#nI").textContent=list.length;
+}
+function rExps(items){
+  const list=items||[],vis=paged("exps",list);
+  if(!list.length){$("#exps").innerHTML=`<div class="empty">No experiments</div>`;return}
+  let h=`<table class="tbl"><thead><tr><th>Idea</th><th>Alpha</th><th>Expr</th><th>S</th><th>F</th><th>T</th><th>Model</th><th>Status</th></tr></thead><tbody>`;
+  vis.forEach(e=>{h+=`<tr><td class="small">${esc((e.idea_title||"").slice(0,40))}</td><td class="mono small">${esc((e.alpha_name||"").slice(0,24))}</td><td class="mono small" style="max-width:220px;word-break:break-all">${esc((e.alpha_expression||"").slice(0,80))}</td><td>${esc(e.sharpe??"-")}</td><td>${esc(e.fitness??"-")}</td><td>${esc(e.turnover??"-")}</td><td>${modelChip(e.llm_model)}</td><td>${chip(e.status)}</td></tr>`});
+  h+=`</tbody></table>${pgr("exps",list.length)}`;
+  $("#exps").innerHTML=h;
+  $("#eC").textContent=list.length;$("#nE").textContent=list.length;
+}
+function rFb(items){
+  const list=items||[],vis=paged("fb",list);
+  if(!list.length){$("#fb").innerHTML=`<div class="empty">No feedback</div>`;return}
+  let h=`<div style="max-height:380px;overflow-y:auto">`;
+  vis.forEach(f=>{h+=`<div class="kv"><span class="k" style="flex:1;min-width:0"><strong>${esc((f.idea_title||"").slice(0,36))}</strong><br><span class="mono muted">${esc((f.alpha_name||"").slice(0,24))}</span></span><span style="display:flex;gap:4px;align-items:center;flex-shrink:0"><span class="chip c-d">S${esc(f.sharpe??"-")}</span><span class="chip c-d">F${esc(f.fitness??"-")}</span>${chip(f.status)}</span></div>`});
+  h+=`</div>${pgr("fb",list.length)}`;
+  $("#fb").innerHTML=h;$("#fC").textContent=list.length;
 }
 
-function renderAgents(items){
-  if(!items||!items.length){$("#agents").innerHTML=`<div class="empty">No agent heartbeat</div>`;return}
-  $("#agents").innerHTML=items.map(a=>{
-    const st=(a.state||"idle").toLowerCase();
-    return`<div class="agent-row"><div class="agent-dot ${st}"></div><div class="agent-info"><div class="agent-name">${esc(a.agent_name)}</div><div class="agent-summary">${esc(a.summary||"—")}</div></div><span class="agent-ts">${esc(a.last_heartbeat||"")}</span>${chip(a.state)}</div>`;
+function rModelCmp(stats){
+  const el=$("#modelCmp");
+  if(!stats||!stats.length){el.innerHTML=`<div class="empty">No model data yet</div>`;return}
+  const maxIdeas=Math.max(...stats.map(s=>s.idea_count),1);
+  el.innerHTML=stats.map(s=>{
+    const rate=s.experiment_count?((s.promising_count/s.experiment_count)*100).toFixed(0):0;
+    return`<div class="model-bar">
+      <div class="model-name">${esc(s.model)}</div>
+      <div class="model-metrics">
+        <span>Ideas: <strong>${s.idea_count}</strong></span>
+        <span>Exps: <strong>${s.experiment_count}</strong></span>
+        <span>Avg S: <strong>${s.avg_sharpe??"-"}</strong></span>
+        <span>Best S: <strong>${s.best_sharpe??"-"}</strong></span>
+      </div>
+      <div class="rate-bar"><div class="rate-fill" style="width:${rate}%"></div></div>
+      <div class="model-rate" style="color:${+rate>=30?"var(--good)":+rate>=15?"var(--warn)":"var(--bad)"}">${rate}%</div>
+    </div>`;
   }).join("");
 }
-
-function renderBest(item){
-  if(!item){$("#best").innerHTML=`<div class="empty">No completed experiment</div>`;return}
-  const rows=[["Idea",item.idea_title],["Alpha",item.alpha_name],["Sharpe",item.sharpe],["Fitness",item.fitness],["Turnover",item.turnover]];
-  $("#best").innerHTML=rows.map(([k,v])=>`<div class="kv"><span class="k">${k}</span><span class="v">${esc(v??"-")}</span></div>`).join("")+`<div class="kv"><span class="k">Status</span>${chip(item.status)}</div>`;
+function rModelIdeas(ideas,stats){
+  const el=$("#modelIdeas");
+  if(!ideas||!ideas.length){el.innerHTML=`<div class="empty">No ideas</div>`;return}
+  // Group ideas by model
+  const byModel={};
+  ideas.forEach(i=>{const m=i.llm_model||"unknown";(byModel[m]=byModel[m]||[]).push(i)});
+  let h="";
+  for(const[model,list]of Object.entries(byModel)){
+    h+=`<div style="margin-bottom:12px"><div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:6px">${modelChip(model)} <span class="muted small">${list.length} ideas</span></div>`;
+    h+=`<table class="tbl"><thead><tr><th>Title</th><th>Status</th><th>Created</th></tr></thead><tbody>`;
+    list.slice(0,5).forEach(i=>{h+=`<tr><td class="small">${esc((i.title||"").slice(0,60))}</td><td>${chip(i.status)}</td><td class="mono small">${ts(i.created_at)}</td></tr>`});
+    if(list.length>5)h+=`<tr><td colspan="3" class="small muted">+${list.length-5} more</td></tr>`;
+    h+=`</tbody></table></div>`;
+  }
+  el.innerHTML=h;
 }
 
-function renderIdeas(items){
-  const list=items||[],vis=paged("ideas",list);
-  if(!list.length){$("#ideas").innerHTML=`<div class="empty">No ideas in queue</div>`;return}
-  let h=`<table class="tbl"><thead><tr><th>Title</th><th>Source</th><th>Priority</th><th>Status</th><th>Created</th></tr></thead><tbody>`;
-  vis.forEach(i=>{h+=`<tr><td><strong>${esc(i.title)}</strong><div class="small muted" style="margin-top:4px;max-width:400px">${esc(i.summary)}</div>${i.rationale?`<div class="small muted" style="margin-top:4px;font-style:italic">${esc(i.rationale)}</div>`:""}</td><td class="small">${esc(i.source_kind||"-")}<br><span class="muted">${esc(i.source_title||"")}</span></td><td>${esc(i.priority)}</td><td>${chip(i.status)}</td><td class="mono small">${esc((i.created_at||"").replace("T"," ").replace("+00:00",""))}</td></tr>`});
-  h+=`</tbody></table>${pager("ideas",list.length)}`;
-  $("#ideas").innerHTML=h;
-  $("#ideaCount").textContent=list.length;
-  $("#navIdeaCount").textContent=list.length;
+function rStratFull(st){
+  const el=$("#stratFull");
+  if(!st||!st.headline){el.innerHTML=`<div class="empty">No strategy yet. Analyst runs after every N new experiments.</div>`;return}
+  const s=st.stats||{},fb=s.failure_breakdown||{};
+  let h=`<div class="card mb"><div class="card-t">Strategy <span class="badge">${ts(st.generated_at)}</span></div>
+    <div style="font-size:14px;font-weight:700;margin-bottom:12px">${esc(st.headline)}</div>
+    <div class="stats" style="grid-template-columns:repeat(4,1fr)">${[["Experiments",s.total||0],["Avg Sharpe",s.avg_sharpe||0],["Avg Fitness",s.avg_fitness||0],["Avg Turnover",s.avg_turnover||0]].map(([l,v])=>`<div class="st"><div class="l">${l}</div><div class="v">${v}</div></div>`).join("")}</div></div>`;
+  h+=`<div class="g2 mb"><div class="card"><div class="card-t">Directions</div><ul class="strat-list">${(st.strategic_directions||[]).map(d=>`<li class="dir">${esc(d)}</li>`).join("")||"<li>None</li>"}</ul></div>
+    <div class="card"><div class="card-t">Coverage Gaps</div><ul class="strat-list">${(st.coverage_gaps||[]).map(d=>`<li class="gap">${esc(d)}</li>`).join("")||"<li>None</li>"}</ul></div></div>`;
+  h+=`<div class="g2 mb"><div class="card"><div class="card-t">Winning</div><ul class="strat-list">${(st.winning_patterns||[]).map(d=>`<li class="win">${esc(d)}</li>`).join("")||"<li>None</li>"}</ul></div>
+    <div class="card"><div class="card-t">Losing</div><ul class="strat-list">${(st.losing_patterns||[]).map(d=>`<li class="lose">${esc(d)}</li>`).join("")||"<li>None</li>"}</ul></div></div>`;
+  h+=`<div class="g2"><div class="card"><div class="card-t">Operators</div><div class="strat-tags mb">${(st.operator_preferences||[]).map(o=>`<span class="chip c-a">${esc(o)}</span>`).join("")||"<span class='muted small'>None</span>"}</div>${(st.avoid_operators||[]).length?`<div class="card-t" style="margin-top:8px">Avoid</div><div class="strat-tags">${st.avoid_operators.map(o=>`<span class="chip c-b">${esc(o)}</span>`).join("")}</div>`:""}</div>
+    <div class="card"><div class="card-t">Failures</div><div style="display:flex;gap:20px"><div><div class="l" style="font-size:10px;color:var(--text3)">High Turnover</div><div style="font-size:20px;font-weight:700;color:var(--bad)">${fb.high_turnover||0}</div></div><div><div class="l" style="font-size:10px;color:var(--text3)">Low Fitness</div><div style="font-size:20px;font-weight:700;color:var(--warn)">${fb.low_fitness||0}</div></div><div><div class="l" style="font-size:10px;color:var(--text3)">Low Sharpe</div><div style="font-size:20px;font-weight:700;color:var(--text3)">${fb.low_sharpe||0}</div></div></div></div></div>`;
+  el.innerHTML=h;
 }
 
-function renderExperiments(items){
-  const list=items||[],vis=paged("experiments",list);
-  if(!list.length){$("#experiments").innerHTML=`<div class="empty">No experiments yet</div>`;return}
-  let h=`<table class="tbl"><thead><tr><th>Idea</th><th>Alpha</th><th>Expression</th><th>Sharpe</th><th>Fitness</th><th>Turnover</th><th>Status</th></tr></thead><tbody>`;
-  vis.forEach(e=>{h+=`<tr><td>${esc(e.idea_title||"-")}</td><td class="mono small">${esc(e.alpha_name||"-")}</td><td class="mono small" style="max-width:320px;word-break:break-all">${esc(e.alpha_expression||"-")}</td><td>${esc(e.sharpe??"-")}</td><td>${esc(e.fitness??"-")}</td><td>${esc(e.turnover??"-")}</td><td>${chip(e.status)}</td></tr>`});
-  h+=`</tbody></table>${pager("experiments",list.length)}`;
-  $("#experiments").innerHTML=h;
-  $("#experimentCount").textContent=list.length;
-  $("#navExpCount").textContent=list.length;
-}
-
-function renderFeedback(items){
-  const list=items||[],vis=paged("feedback",list);
-  if(!list.length){$("#feedback").innerHTML=`<div class="empty">No feedback yet</div>`;return}
-  let h=`<div class="scroll">`;
-  vis.forEach(f=>{h+=`<div class="kv"><span class="k" style="flex:1;min-width:0"><strong>${esc(f.idea_title||"")}</strong><br><span class="mono muted">${esc(f.alpha_name||"")}</span></span><span style="display:flex;gap:6px;align-items:center;flex-shrink:0"><span class="chip chip-default">S ${esc(f.sharpe??"-")}</span><span class="chip chip-default">F ${esc(f.fitness??"-")}</span>${chip(f.status)}</span></div>`});
-  h+=`</div>${pager("feedback",list.length)}`;
-  $("#feedback").innerHTML=h;
-  $("#feedbackCount").textContent=list.length;
-}
-
-function renderEvents(items){
-  const list=items||[],vis=paged("events",list);
-  if(!list.length){$("#events").innerHTML=`<div class="empty">No events yet</div>`;return}
+function rEvts(items){
+  const list=items||[],vis=paged("evts",list);
+  if(!list.length){$("#evts").innerHTML=`<div class="empty">No events</div>`;return}
   let h=`<table class="tbl"><thead><tr><th>Level</th><th>Kind</th><th>Message</th><th>Time</th></tr></thead><tbody>`;
-  vis.forEach(e=>{const lc={"error":"chip-bad","warning":"chip-warn","warn":"chip-warn"}[(e.level||"").toLowerCase()]||"chip-default";h+=`<tr><td><span class="chip ${lc}">${esc(e.level||"info")}</span></td><td><span class="chip chip-default">${esc(e.kind)}</span></td><td class="small">${esc(e.message)}</td><td class="mono small">${esc(e.created_at||"")}</td></tr>`});
-  h+=`</tbody></table>${pager("events",list.length)}`;
-  $("#events").innerHTML=h;
-  $("#eventCount").textContent=list.length;
-  $("#navEventCount").textContent=list.length;
+  vis.forEach(e=>{const lc={"error":"c-b","warning":"c-w","warn":"c-w"}[(e.level||"").toLowerCase()]||"c-d";h+=`<tr><td><span class="chip ${lc}">${esc(e.level||"info")}</span></td><td><span class="chip c-d">${esc(e.kind)}</span></td><td class="small">${esc((e.message||"").slice(0,120))}</td><td class="mono small">${ts(e.created_at)}</td></tr>`});
+  h+=`</tbody></table>${pgr("evts",list.length)}`;
+  $("#evts").innerHTML=h;
+  $("#evC").textContent=list.length;$("#nEv").textContent=list.length;
 }
 
-function renderReflections(items){
-  const list=items||[],vis=paged("reflections",list);
-  if(!list.length){$("#reflections").innerHTML=`<div class="empty">No reflections yet</div>`;return}
+function rRefs(items){
+  const list=items||[],vis=paged("refs",list);
+  if(!list.length){$("#refs").innerHTML=`<div class="empty">No reflections</div>`;return}
   let h="";
   vis.forEach(item=>{
-    const p=item.payload||{},obs=p.observations||{},fails=p.failure_patterns||[],dirs=p.improvement_directions||[],srcs=p.source_focus||[],qt=p.queued_titles||[],erefs=p.experiment_refs||[],dm=p.discarded_motifs||[],am=p.adjustment_map||[],lin=p.queued_idea_lineage||[];
-    h+=`<div class="ref-card"><div style="display:flex;justify-content:space-between;align-items:start"><h4>${esc(item.message||"Reflection")}</h4><span class="mono small muted">${esc(item.created_at||"")}</span></div>
-    <div style="display:flex;gap:6px;margin:8px 0"><span class="chip chip-default">Avg Sharpe ${esc(obs.average_sharpe??"-")}</span><span class="chip chip-default">Avg Turnover ${esc(obs.average_turnover??"-")}</span><span class="chip chip-default">Queued ${esc(obs.queued_idea_count??"-")}</span></div>
-    <div class="ref-grid">
-      <div class="ref-block"><strong>Failure Patterns</strong><ul>${fails.map(f=>`<li>${esc(f)}</li>`).join("")||"<li class='muted'>None</li>"}</ul></div>
-      <div class="ref-block"><strong>Improvements</strong><ul>${dirs.map(d=>`<li>${esc(d)}</li>`).join("")||"<li class='muted'>None</li>"}</ul></div>
-      <div class="ref-block"><strong>Source Focus</strong><ul>${srcs.map(s=>`<li>${esc(s)}</li>`).join("")||"<li class='muted'>None</li>"}</ul></div>
-      <div class="ref-block"><strong>Status Breakdown</strong><ul>${Object.entries(obs.status_breakdown||{}).map(([k,v])=>`<li>${esc(k)}: ${esc(v)}</li>`).join("")||"<li class='muted'>None</li>"}</ul></div>
-      <div class="ref-block"><strong>Experiment Refs</strong><ul>${erefs.map(r=>`<li>${esc(r.alpha_name||"?")} · ${esc(r.status)} · S ${esc(r.sharpe??"-")}</li>`).join("")||"<li class='muted'>None</li>"}</ul></div>
-      <div class="ref-block"><strong>Discarded Motifs</strong><ul>${dm.map(d=>`<li>${esc(d.motif)}: ${esc(d.reason)}</li>`).join("")||"<li class='muted'>None</li>"}</ul></div>
-      <div class="ref-block"><strong>Adjustments</strong><ul>${am.map(a=>`<li>${esc(a.observation)} → ${esc(a.response)}</li>`).join("")||"<li class='muted'>None</li>"}</ul></div>
-      <div class="ref-block"><strong>Queued Follow-ups</strong><ul>${qt.map(t=>`<li>${esc(t)}</li>`).join("")||"<li class='muted'>None</li>"}</ul></div>
-    </div>
-    ${lin.length?`<div class="ref-block" style="margin-top:8px"><strong>Idea Lineage</strong><ul>${lin.map(l=>`<li><strong>${esc(l.idea_title)}</strong> ← ${esc(l.parent_alpha||"-")} (${esc(l.parent_status||"-")}, S ${esc(l.parent_sharpe??"-")}) → ${esc(l.adjustment||"-")}</li>`).join("")}</ul></div>`:""}
-    </div>`;
+    const p=item.payload||{},obs=p.observations||{},fails=p.failure_patterns||[],dirs=p.improvement_directions||[],dm=p.discarded_motifs||[],am=p.adjustment_map||[];
+    h+=`<div class="ref"><div style="display:flex;justify-content:space-between"><h4>${esc(item.message||"Reflection")}</h4><span class="mono small muted">${ts(item.created_at)}</span></div>
+      <div style="display:flex;gap:4px;margin:6px 0"><span class="chip c-d">S ${esc(obs.average_sharpe??"-")}</span><span class="chip c-d">T ${esc(obs.average_turnover??"-")}</span><span class="chip c-d">Q ${esc(obs.queued_idea_count??"-")}</span></div>
+      <div class="ref-grid">
+        <div class="ref-b"><strong>Failures</strong><ul>${fails.map(f=>`<li>${esc(f)}</li>`).join("")||"<li class='muted'>None</li>"}</ul></div>
+        <div class="ref-b"><strong>Directions</strong><ul>${dirs.map(d=>`<li>${esc(d)}</li>`).join("")||"<li class='muted'>None</li>"}</ul></div>
+        <div class="ref-b"><strong>Discarded</strong><ul>${dm.map(d=>`<li>${esc(d.motif)}</li>`).join("")||"<li class='muted'>None</li>"}</ul></div>
+        <div class="ref-b"><strong>Adjustments</strong><ul>${am.map(a=>`<li>${esc(a.response)}</li>`).join("")||"<li class='muted'>None</li>"}</ul></div>
+      </div></div>`;
   });
-  h+=pager("reflections",list.length);
-  $("#reflections").innerHTML=h;
+  h+=pgr("refs",list.length);
+  $("#refs").innerHTML=h;
 }
 
-function renderErrorBanner(agents){
-  const errs=(agents||[]).filter(a=>(a.status||"").toLowerCase()==="error");
-  if(!errs.length){$("#errorBanner").innerHTML="";return}
-  $("#errorBanner").innerHTML=errs.map(a=>`<div class="error-banner"><span class="eb-icon">⚠</span><div class="eb-body"><div class="eb-title">${esc(a.agent_name)} error</div><div class="eb-msg">${esc(a.message)}</div><div class="eb-time">${esc(a.updated_at||"")}</div></div></div>`).join("");
+function rErr(agents){
+  const errs=(agents||[]).filter(a=>(a.state||"").toLowerCase()==="error");
+  if(!errs.length){$("#errB").innerHTML="";return}
+  $("#errB").innerHTML=errs.map(a=>`<div class="err-b"><div><div class="eb-t">${esc(a.agent_name)} error</div><div class="eb-m">${esc(a.summary)}</div></div></div>`).join("");
 }
 
-// Navigation
 document.addEventListener("click",e=>{
-  const nav=e.target.closest("[data-section]");
-  if(nav){$$(".nav-item").forEach(n=>n.classList.toggle("active",n===nav));$$(".section").forEach(s=>s.classList.toggle("active",s.id==="sec-"+nav.dataset.section));return}
+  const nav=e.target.closest("[data-s]");
+  if(nav){$$(".nav-item").forEach(n=>n.classList.toggle("active",n===nav));$$(".section").forEach(s=>s.classList.toggle("active",s.id==="sec-"+nav.dataset.s));return}
   const pb=e.target.closest("[data-pg]");
   if(pb){pg[pb.dataset.pg]=Math.max(0,pg[pb.dataset.pg]+Number(pb.dataset.d||0));render();return}
 });
 
 function render(){
-  const{summary:s,ideas:i,experiments:ex,feedback:fb,events:ev,reflections:rf,config:cf,logs:lg}=_data;
-  if(s){renderStats(s);renderMix(s);renderAgents(s.agents||[]);renderBest(s.best_experiment)}
-  renderTrend(ex);renderIdeas(i);renderExperiments(ex);renderFeedback(fb);renderEvents(ev);renderReflections(rf);renderErrorBanner(s?s.agents:[]);
-  if(cf)$("#configView").textContent=JSON.stringify(cf,null,2);
-  if(lg)$("#logView").textContent=(lg||{}).tail||"No log lines";
+  const{summary:s,ideas:i,experiments:ex,feedback:f,events:ev,reflections:rf,config:cf,logs:lg,strategy:st,modelStats:ms}=D;
+  if(s){rStats(s);rMix(s);rAgents(s.agents||[]);rBest(s.best_experiment);rErr(s.agents||[])}
+  rTrend(ex);rIdeas(i);rExps(ex);rFb(f);rEvts(ev);rRefs(rf);rStratBanner(st);rStratFull(st||{});
+  rModelCmp(ms);rModelIdeas(i,ms);
+  if(cf)$("#cfgV").textContent=JSON.stringify(cf,null,2);
+  if(lg)$("#logV").textContent=(lg||{}).tail||"";
 }
 
 async function refresh(){
   try{
-    const[summary,ideas,experiments,feedback,events,reflections,config,logs]=await Promise.all([
+    const[summary,ideas,experiments,feedback,events,reflections,config,logs,strategy,modelStats]=await Promise.all([
       api("/api/summary"),api("/api/ideas"),api("/api/experiments"),api("/api/feedback"),
-      api("/api/events"),api("/api/reflections"),api("/api/config"),api("/api/logs")
+      api("/api/events"),api("/api/reflections"),api("/api/config"),api("/api/logs"),
+      api("/api/strategy"),api("/api/model-stats")
     ]);
-    _data={summary,ideas,experiments,feedback,events,reflections,config,logs};
+    D={summary,ideas,experiments,feedback,events,reflections,config,logs,strategy,modelStats};
     render();
-  }catch(e){console.warn("refresh failed",e)}
+  }catch(e){console.warn("refresh",e)}
 }
-
 function tick(){$("#clock").textContent=new Date().toLocaleTimeString()}
-tick();setInterval(tick,1000);
-refresh();setInterval(refresh,5000);
+tick();setInterval(tick,1000);refresh();setInterval(refresh,5000);
 </script>
 </body>
 </html>

@@ -29,7 +29,7 @@ class Region(Enum):
     DEU = "DEU"
 
 
-class Unviverse(Enum):
+class Universe(Enum):
     """股票池 Universe"""
     TOPDIV3000 = "TOPDIV3000"
     TOP3000 = "TOP3000"
@@ -51,7 +51,7 @@ class AlphaConfig:
     """Alpha 配置参数"""
     expression: str
     region: Region = Region.USA
-    universe: Unviverse = Unviverse.TOP3000
+    universe: Universe = Universe.TOP3000
     delay: Delay = Delay.DELAY_1
     decay: int = 0
     neutralization: str = "SUBINDUSTRY"  # MARKET, INDUSTRY, SUBINDUSTRY, SECTOR, NONE
@@ -421,7 +421,7 @@ class WorldQuantBrainClient:
                 try:
                     error_data = response.json()
                     error_msg = error_data.get("message", str(error_data))
-                except:
+                except (ValueError, KeyError):
                     error_msg = response.text or f"HTTP {response.status_code}"
                 logger.error(f"模拟失败: {error_msg}")
                 return SimulateResult(

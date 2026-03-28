@@ -56,6 +56,12 @@ class DashboardServer:
                     if self.path == "/api/reflections":
                         self._send_json(store.list_recent_reflections())
                         return
+                    if self.path == "/api/strategy":
+                        self._send_json(store.latest_analyst_strategy() or {})
+                        return
+                    if self.path == "/api/model-stats":
+                        self._send_json(store.model_stats())
+                        return
                     if self.path == "/api/config":
                         self._send_json(read_config_snapshot(config_path))
                         return

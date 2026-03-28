@@ -15,7 +15,7 @@ import threading
 import time
 import copy
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import quote
@@ -30,7 +30,7 @@ except ImportError:  # pragma: no cover
 
 from .alpha_generator import AlphaGenerator
 from .alpha_submitter import AlphaSubmitter, SubmissionCriteria
-from .client import Region, Unviverse, WorldQuantBrainClient
+from .client import Region, Universe, WorldQuantBrainClient
 from .learning import AlphaAnalyzer, AlphaDatabase, SmartGenerator
 
 logger = logging.getLogger(__name__)
@@ -113,7 +113,7 @@ def read_log_tail(log_path: Path, lines: int = 40) -> str:
 DEFAULT_CONFIG_TEMPLATE = """# wqa: WorldQuant Agent Lab
 # 运行前建议：
 # 1. 填入 WorldQuant Brain 账号
-# 2. 至少选择一个 LLM profile（gemini、kimi 或 siliconflow）
+# 2. 至少选择一个 LLM profile（gemini、kimi、siliconflow 或 anthropic）
 # 3. 如需通知，填入 Telegram bot token 与 chat_id
 
 app:
@@ -138,6 +138,11 @@ providers:
     model_name: deepseek-ai/DeepSeek-V3
     api_key: ${SILICONFLOW_API_KEY}
     base_url: https://api.siliconflow.cn/v1
+  anthropic:
+    provider: anthropic
+    model_name: claude-opus-4
+    api_key: ${ANTHROPIC_API_KEY}
+    base_url: https://api.anthropic.com
 
 agents:
   researcher:
@@ -155,6 +160,11 @@ agents:
     enabled: true
     interval_seconds: 180
     llm_profile: kimi
+  analyst:
+    enabled: true
+    interval_seconds: 1800
+    llm_profile: anthropic
+    review_every_n_experiments: 20
 
 integrations:
   worldquant:
@@ -251,6 +261,7 @@ class RuntimeStore:
                 status TEXT NOT NULL,
                 priority INTEGER NOT NULL DEFAULT 50,
                 agent_notes TEXT,
+                llm_model TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -271,6 +282,7 @@ class RuntimeStore:
                 wq_alpha_id TEXT,
                 submitted INTEGER NOT NULL DEFAULT 0,
                 submission_result TEXT,
+                llm_model TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY (idea_id) REFERENCES ideas(id)
@@ -296,6 +308,15 @@ class RuntimeStore:
             """
         )
         conn.commit()
+        # Migrate existing databases: add llm_model columns if missing
+        existing_idea_cols = {row[1] for row in conn.execute("PRAGMA table_info(ideas)").fetchall()}
+        if "llm_model" not in existing_idea_cols:
+            conn.execute("ALTER TABLE ideas ADD COLUMN llm_model TEXT")
+            conn.commit()
+        existing_exp_cols = {row[1] for row in conn.execute("PRAGMA table_info(experiments)").fetchall()}
+        if "llm_model" not in existing_exp_cols:
+            conn.execute("ALTER TABLE experiments ADD COLUMN llm_model TEXT")
+            conn.commit()
         conn.close()
         self._refresh_cache()
 
@@ -367,8 +388,8 @@ class RuntimeStore:
                 """
                 INSERT INTO ideas (
                     title, summary, rationale, source_kind, source_title, source_url,
-                    status, priority, agent_notes, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    status, priority, agent_notes, llm_model, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     idea["title"],
@@ -380,6 +401,7 @@ class RuntimeStore:
                     idea.get("status", "queued"),
                     self._safe_priority(idea.get("priority", 50)),
                     idea.get("agent_notes", ""),
+                    idea.get("llm_model"),
                     now,
                     now,
                 ),
@@ -394,7 +416,7 @@ class RuntimeStore:
         conn = self._connect()
         cur = conn.cursor()
         # Recover ideas stuck in 'engineering' for over 30 minutes
-        stale_cutoff = datetime.now(timezone.utc).replace(microsecond=0) - __import__('datetime').timedelta(minutes=30)
+        stale_cutoff = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=30)
         cur.execute(
             "UPDATE ideas SET status = 'queued', updated_at = ? WHERE status = 'engineering' AND updated_at < ?",
             (utc_now(), stale_cutoff.isoformat()),
@@ -450,8 +472,8 @@ class RuntimeStore:
             INSERT INTO experiments (
                 idea_id, alpha_name, alpha_expression, implementation_notes, status,
                 sharpe, fitness, turnover, drawdown, returns, wq_alpha_id,
-                submitted, submission_result, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                submitted, submission_result, llm_model, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 payload["idea_id"],
@@ -467,6 +489,7 @@ class RuntimeStore:
                 payload.get("wq_alpha_id"),
                 int(bool(payload.get("submitted", False))),
                 payload.get("submission_result"),
+                payload.get("llm_model"),
                 now,
                 now,
             ),
@@ -501,7 +524,7 @@ class RuntimeStore:
         conn = self._connect()
         cur = conn.cursor()
         # Recover experiments stuck in 'reviewing' for over 30 minutes
-        stale_cutoff = datetime.now(timezone.utc).replace(microsecond=0) - __import__('datetime').timedelta(minutes=30)
+        stale_cutoff = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=30)
         cur.execute(
             "UPDATE experiments SET status = 'promising', updated_at = ? WHERE status = 'reviewing' AND updated_at < ?",
             (utc_now(), stale_cutoff.isoformat()),
@@ -746,6 +769,75 @@ class RuntimeStore:
         conn.close()
         return count
 
+    def experiment_count_since(self, since_event_kind: str) -> int:
+        """Count experiments created after the latest event of the given kind."""
+        conn = self._connect()
+        last_event = conn.execute(
+            "SELECT created_at FROM events WHERE kind = ? ORDER BY created_at DESC LIMIT 1",
+            (since_event_kind,),
+        ).fetchone()
+        if last_event:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM experiments WHERE created_at > ?",
+                (last_event["created_at"],),
+            ).fetchone()[0]
+        else:
+            count = conn.execute("SELECT COUNT(*) FROM experiments").fetchone()[0]
+        conn.close()
+        return count
+
+    def latest_analyst_strategy(self) -> Optional[Dict[str, Any]]:
+        """Return the most recent analyst strategy payload, or None."""
+        conn = self._connect()
+        row = conn.execute(
+            "SELECT payload_json FROM events WHERE kind = 'analyst_strategy' ORDER BY created_at DESC LIMIT 1"
+        ).fetchone()
+        conn.close()
+        if not row:
+            return None
+        try:
+            return json.loads(row["payload_json"])
+        except (json.JSONDecodeError, TypeError):
+            return None
+
+    def all_experiments(self) -> List[Dict[str, Any]]:
+        """Return all experiments with idea titles for analyst deep review."""
+        conn = self._connect()
+        rows = conn.execute(
+            """
+            SELECT e.*, i.title AS idea_title
+            FROM experiments e
+            JOIN ideas i ON i.id = e.idea_id
+            ORDER BY e.created_at ASC
+            """
+        ).fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
+    def model_stats(self) -> List[Dict[str, Any]]:
+        """Aggregate idea/experiment performance grouped by llm_model."""
+        conn = self._connect()
+        rows = conn.execute(
+            """
+            SELECT
+                COALESCE(i.llm_model, 'unknown') AS model,
+                COUNT(DISTINCT i.id) AS idea_count,
+                COUNT(e.id) AS experiment_count,
+                SUM(CASE WHEN e.status IN ('promising','accepted','submitted') THEN 1 ELSE 0 END) AS promising_count,
+                SUM(CASE WHEN e.status = 'rejected' THEN 1 ELSE 0 END) AS rejected_count,
+                ROUND(AVG(e.sharpe), 3) AS avg_sharpe,
+                ROUND(AVG(e.fitness), 3) AS avg_fitness,
+                ROUND(AVG(e.turnover), 3) AS avg_turnover,
+                ROUND(MAX(e.sharpe), 3) AS best_sharpe
+            FROM ideas i
+            LEFT JOIN experiments e ON e.idea_id = i.id
+            GROUP BY COALESCE(i.llm_model, 'unknown')
+            ORDER BY avg_sharpe DESC
+            """
+        ).fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
 
 class BaseLLMProvider:
     provider_name = "unknown"
@@ -857,6 +949,46 @@ class SiliconFlowProvider(BaseLLMProvider):
         return payload["choices"][0]["message"]["content"]
 
 
+class AnthropicProvider(BaseLLMProvider):
+    provider_name = "anthropic"
+
+    def __init__(self, model_name: str, api_key: str, base_url: str):
+        self.model_name = model_name
+        self.api_key = api_key
+        self.base_url = base_url.rstrip("/")
+
+    def generate(self, system_prompt: str, user_prompt: str) -> str:
+        max_retries = 3
+        for attempt in range(max_retries):
+            response = requests.post(
+                f"{self.base_url}/v1/messages",
+                headers={
+                    "x-api-key": self.api_key,
+                    "anthropic-version": "2023-06-01",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": self.model_name,
+                    "max_tokens": 4096,
+                    "system": system_prompt,
+                    "messages": [
+                        {"role": "user", "content": user_prompt},
+                    ],
+                },
+                timeout=180,
+            )
+            if response.status_code == 429 and attempt < max_retries - 1:
+                wait = 2 ** (attempt + 1) * 15
+                logger.warning("Anthropic 429 rate limited, retrying in %ds (attempt %d/%d)", wait, attempt + 1, max_retries)
+                time.sleep(wait)
+                continue
+            response.raise_for_status()
+            break
+        payload = response.json()
+        content = payload.get("content", [])
+        return "\n".join(block.get("text", "") for block in content if block.get("type") == "text")
+
+
 def create_llm_provider(config: Dict[str, Any], profile_name: Optional[str]) -> BaseLLMProvider:
     providers = config.get("providers", {})
     if not profile_name or profile_name not in providers:
@@ -880,6 +1012,12 @@ def create_llm_provider(config: Dict[str, Any], profile_name: Optional[str]) -> 
             model_name=model_name,
             api_key=api_key,
             base_url=profile.get("base_url", "https://api.siliconflow.cn/v1"),
+        )
+    if provider == "anthropic":
+        return AnthropicProvider(
+            model_name=model_name,
+            api_key=api_key,
+            base_url=profile.get("base_url", "https://api.anthropic.com"),
         )
     return DisabledLLMProvider()
 
@@ -986,10 +1124,13 @@ class AgentRuntime:
         self.config_path = config_path
         self.config = load_yaml_config(config_path)
         self.state_dir = ensure_directory(Path(self.config["app"]["state_dir"]).resolve())
-        self.runtime_db = self.state_dir / "runtime.db"
+        self.db_dir = ensure_directory(self.state_dir / "db")
+        self.log_dir = ensure_directory(self.state_dir / "logs")
+        self.results_dir = ensure_directory(self.state_dir / "results")
+        self._migrate_legacy_layout()
+        self.runtime_db = self.db_dir / "runtime.db"
         self.pid_file = self.state_dir / "wqa.pid"
         self.meta_file = self.state_dir / "runtime.json"
-        self.log_dir = ensure_directory(self.state_dir / "logs")
         self.store = RuntimeStore(self.runtime_db)
         self.stop_event = threading.Event()
         from wq_brain.dashboard import DashboardServer
@@ -1003,8 +1144,32 @@ class AgentRuntime:
         self.collector = SourceCollector(self.config)
         self.notifier = TelegramNotifier(self.config.get("integrations", {}).get("telegram", {}))
         self.alpha_generator = AlphaGenerator()
-        self.learning_db = AlphaDatabase(str(self.state_dir / "alpha_history.db"))
+        self.learning_db = AlphaDatabase(str(self.db_dir / "alpha_history.db"))
         self._brain_knowledge = self._load_brain_knowledge()
+
+    def _migrate_legacy_layout(self) -> None:
+        """Move files from flat .wqa/ to the new subdirectory layout."""
+        import shutil
+        moves = [
+            (self.state_dir / "runtime.db", self.db_dir / "runtime.db"),
+            (self.state_dir / "alpha_history.db", self.db_dir / "alpha_history.db"),
+            (self.state_dir / "submission_checks.jsonl", self.log_dir / "submission_checks.jsonl"),
+        ]
+        for src, dst in moves:
+            if src.exists() and not dst.exists():
+                shutil.move(str(src), str(dst))
+                logger.info("migrated %s → %s", src.name, dst)
+        # Move submission_progress_*.json and report_*.txt to results/
+        for pattern in ("submission_progress_*.json", "report_*.txt"):
+            for f in self.state_dir.glob(pattern):
+                dst = self.results_dir / f.name
+                if not dst.exists():
+                    shutil.move(str(f), str(dst))
+        # Move legacy state.db if present
+        legacy_state = self.state_dir / "state.db"
+        if legacy_state.exists() and not (self.db_dir / "runtime.db").exists():
+            shutil.move(str(legacy_state), str(self.db_dir / "runtime.db"))
+            logger.info("migrated state.db → db/runtime.db")
 
     def _load_brain_knowledge(self) -> Dict[str, Any]:
         """Load curated BRAIN platform knowledge if available."""
@@ -1073,7 +1238,7 @@ class AgentRuntime:
         )
         if not client.authenticate():
             raise RuntimeError("WorldQuant authentication failed")
-        client.submission_log_path = str(self.state_dir / "submission_checks.jsonl")
+        client.submission_log_path = str(self.log_dir / "submission_checks.jsonl")
         return client
 
     def _criteria(self) -> SubmissionCriteria:
@@ -1108,7 +1273,7 @@ class AgentRuntime:
         self._install_signal_handlers()
 
         threads = []
-        for agent_name in ("researcher", "engineer", "reviewer"):
+        for agent_name in ("researcher", "engineer", "reviewer", "analyst"):
             if self.config.get("agents", {}).get(agent_name, {}).get("enabled", True):
                 thread = threading.Thread(
                     target=self._agent_loop,
@@ -1146,6 +1311,8 @@ class AgentRuntime:
                     summary = self.run_researcher_cycle()
                 elif agent_name == "engineer":
                     summary = self.run_engineer_cycle()
+                elif agent_name == "analyst":
+                    summary = self.run_analyst_cycle()
                 else:
                     summary = self.run_reviewer_cycle()
                 self.store.set_agent_status(agent_name, "idle", summary)
@@ -1179,8 +1346,8 @@ class AgentRuntime:
                 return max(interval_seconds // 3 - int(elapsed), 1)
             return max(interval_seconds - int(elapsed), 1)
 
-        if summary in {"no queued ideas", "no promising experiments"}:
-            # Back off to full interval instead of spinning at 15s
+        if summary in {"no queued ideas", "no promising experiments"} or summary.startswith("waiting"):
+            # Back off to full interval instead of spinning
             return interval_seconds
 
         return max(interval_seconds - int(elapsed), 1)
@@ -1213,7 +1380,8 @@ class AgentRuntime:
             ),
             payload=provider_info,
         )
-        ideas = self._generate_research_ideas(provider, recent_sources, recent_experiments, batch_size)
+        model_label = f"{provider_info.get('provider', '')}:{provider_info.get('model_name', '')}".strip(":")
+        ideas = self._generate_research_ideas(provider, recent_sources, recent_experiments, batch_size, model_label)
         reflection = self._build_research_reflection(recent_sources, recent_experiments, ideas)
         inserted_ideas = self.store.add_ideas(ideas)
         for idea in ideas[:inserted_ideas]:
@@ -1390,6 +1558,7 @@ class AgentRuntime:
         recent_sources: List[Dict[str, Any]],
         recent_experiments: List[Dict[str, Any]],
         batch_size: int,
+        model_label: str = "",
     ) -> List[Dict[str, Any]]:
         sources_text = json.dumps(recent_sources[:8], ensure_ascii=False, indent=2)
         criteria = self._criteria()
@@ -1422,6 +1591,28 @@ class AgentRuntime:
                 parts.append(f"Discarded motifs (DO NOT reuse): {', '.join(names)}")
             if parts:
                 last_reflection = "\n\nLAST CYCLE REFLECTION:\n" + "\n".join(parts)
+
+        # Inject analyst strategy (long-term strategic direction)
+        analyst_section = ""
+        strategy = self.store.latest_analyst_strategy()
+        if strategy:
+            parts_s = []
+            if strategy.get("strategic_directions"):
+                parts_s.append("Strategic directions: " + "; ".join(strategy["strategic_directions"][:4]))
+            if strategy.get("winning_patterns"):
+                parts_s.append("Winning patterns: " + "; ".join(strategy["winning_patterns"][:4]))
+            if strategy.get("losing_patterns"):
+                parts_s.append("Avoid: " + "; ".join(strategy["losing_patterns"][:4]))
+            if strategy.get("coverage_gaps"):
+                parts_s.append("Underexplored areas: " + "; ".join(strategy["coverage_gaps"][:3]))
+            if strategy.get("priority_categories"):
+                parts_s.append(f"Priority categories: {', '.join(strategy['priority_categories'][:5])}")
+            if strategy.get("operator_preferences"):
+                parts_s.append(f"Preferred operators: {', '.join(strategy['operator_preferences'][:5])}")
+            if strategy.get("avoid_operators"):
+                parts_s.append(f"Avoid operators: {', '.join(strategy['avoid_operators'][:5])}")
+            if parts_s:
+                analyst_section = "\n\nANALYST STRATEGY (follow these long-term directions):\n" + "\n".join(parts_s)
 
         # Inject platform knowledge
         kb_proven = self._brain_knowledge_prompt("proven_alphas")
@@ -1466,12 +1657,13 @@ class AgentRuntime:
             f"Fresh sources:\n{sources_text}\n\n"
             f"Recent experiments (learn from these):\n{json.dumps(exp_digest, ensure_ascii=False, indent=2)}"
             f"{last_reflection}"
+            f"{analyst_section}"
         )
 
         try:
             raw = provider.generate(system_prompt, user_prompt)
             ideas = json.loads(extract_json(raw))
-            return [self._normalize_idea(idea) for idea in ideas[:batch_size]]
+            return [self._normalize_idea(idea, model_label) for idea in ideas[:batch_size]]
         except Exception as exc:
             logger.warning("researcher LLM failed, using fallback: %s", exc)
             self.store.add_event(
@@ -1542,7 +1734,7 @@ class AgentRuntime:
             mapping = {"low": 25, "medium": 50, "high": 75, "critical": 90}
             return mapping.get(str(value).strip().lower(), 50)
 
-    def _normalize_idea(self, idea: Dict[str, Any]) -> Dict[str, Any]:
+    def _normalize_idea(self, idea: Dict[str, Any], llm_model: str = "") -> Dict[str, Any]:
         return {
             "title": str(idea.get("title", "Untitled idea")).strip(),
             "summary": str(idea.get("summary", "")).strip() or "No summary",
@@ -1551,17 +1743,30 @@ class AgentRuntime:
             "source_kind": idea.get("source_kind"),
             "source_title": idea.get("source_title"),
             "source_url": idea.get("source_url"),
+            "llm_model": llm_model,
             "status": "queued",
         }
 
     def run_engineer_cycle(self) -> str:
         limit = int(self.config["app"].get("default_claim_limit", 3))
         claimed_ideas = self.store.claim_ideas(limit=limit)
-        if not claimed_ideas:
-            return "no queued ideas"
 
         profile_name = self.config.get("agents", {}).get("engineer", {}).get("llm_profile")
         provider = create_llm_provider(self.config, profile_name)
+
+        client = None
+        try:
+            client = self._worldquant_client()
+        except Exception as exc:
+            self.store.add_event(level="warning", kind="engineer", message=f"worldquant unavailable: {exc}")
+
+        if not claimed_ideas:
+            # No new ideas, but still try to refine near-misses
+            refined = self._refine_near_misses(provider, client)
+            if not refined:
+                return "no queued ideas"
+            return f"claimed_ideas=0, experiments=0, refined={refined}"
+
         provider_info = describe_llm_profile(self.config, profile_name, provider)
         self.store.add_event(
             level="info",
@@ -1573,11 +1778,7 @@ class AgentRuntime:
             payload=provider_info,
         )
         alpha_batch_size = int(self.config.get("agents", {}).get("engineer", {}).get("alpha_batch_size", 4))
-        client = None
-        try:
-            client = self._worldquant_client()
-        except Exception as exc:
-            self.store.add_event(level="warning", kind="engineer", message=f"worldquant unavailable: {exc}")
+        eng_model_label = f"{provider_info.get('provider', '')}:{provider_info.get('model_name', '')}".strip(":")
 
         criteria = self._criteria()
         results = []
@@ -1611,11 +1812,11 @@ class AgentRuntime:
             submitter = AlphaSubmitter(
                 client,
                 criteria=criteria,
-                results_dir=str(self.state_dir),
+                results_dir=str(self.results_dir),
                 enable_learning=True,
             )
             region = Region(self.config["integrations"]["worldquant"].get("region", "USA"))
-            universe = Unviverse(self.config["integrations"]["worldquant"].get("universe", "TOP3000"))
+            universe = Universe(self.config["integrations"]["worldquant"].get("universe", "TOP3000"))
             self.store.set_agent_status(
                 "engineer",
                 "running",
@@ -1645,6 +1846,7 @@ class AgentRuntime:
                         "alpha_name": alpha_candidate.get("name") or record.alpha_type or record.expression[:48],
                         "alpha_expression": record.expression,
                         "implementation_notes": f"category={record.category}; source_idea={idea['title']}",
+                        "llm_model": eng_model_label,
                         "status": "promising" if meets_threshold else "rejected",
                         "sharpe": record.simulate_result.sharpe,
                         "fitness": record.simulate_result.fitness,
@@ -1669,12 +1871,15 @@ class AgentRuntime:
                 payload={"idea_id": idea["id"], "idea_title": idea["title"], "idea_status": idea_status},
             )
 
+        # Phase 2: refine near-miss experiments (high sharpe but failed on turnover/fitness)
+        refined = self._refine_near_misses(provider, client)
+
         self.store.add_event(
             level="info",
             kind="engineer",
-            message=f"engineer processed {len(claimed_ideas)} ideas and created {len(results)} experiments",
+            message=f"engineer processed {len(claimed_ideas)} ideas, created {len(results)} experiments, refined {refined} near-misses",
         )
-        return f"claimed_ideas={len(claimed_ideas)}, experiments={len(results)}"
+        return f"claimed_ideas={len(claimed_ideas)}, experiments={len(results)}, refined={refined}"
 
     def _generate_engineering_candidates(
         self,
@@ -1801,11 +2006,128 @@ class AgentRuntime:
                 result.append(c)
         return result if result else candidates[:1]  # keep at least one
 
+    def _refine_near_misses(self, provider: BaseLLMProvider, client: Optional[Any]) -> int:
+        """Find rejected experiments close to passing and generate improved variants."""
+        if client is None:
+            return 0
+        criteria = self._criteria()
+        conn = self.store._connect()
+        near_misses = conn.execute(
+            """
+            SELECT e.*, i.title AS idea_title
+            FROM experiments e
+            JOIN ideas i ON i.id = e.idea_id
+            WHERE e.status = 'rejected'
+              AND e.sharpe >= ?
+              AND (e.turnover > ? OR e.fitness < ?)
+              AND e.id NOT IN (
+                  SELECT CAST(json_extract(payload_json, '$.parent_experiment_id') AS INTEGER)
+                  FROM events
+                  WHERE kind = 'engineer_refinement'
+                    AND json_extract(payload_json, '$.parent_experiment_id') IS NOT NULL
+              )
+            ORDER BY e.sharpe DESC
+            LIMIT 2
+            """,
+            (criteria.min_sharpe * 0.6, criteria.max_turnover, criteria.min_fitness),
+        ).fetchall()
+        conn.close()
+
+        if not near_misses:
+            return 0
+
+        submitter = AlphaSubmitter(
+            client, criteria=criteria,
+            results_dir=str(self.results_dir), enable_learning=True,
+        )
+        region = Region(self.config["integrations"]["worldquant"].get("region", "USA"))
+        universe = Universe(self.config["integrations"]["worldquant"].get("universe", "TOP3000"))
+
+        refined_count = 0
+        for experiment in [dict(r) for r in near_misses]:
+            self.store.set_agent_status(
+                "engineer", "running",
+                f"refining near-miss: {experiment.get('alpha_name', '?')} (sharpe={experiment.get('sharpe')})",
+            )
+            variants = self._generate_refinement_variants(provider, experiment, criteria)
+            if not variants:
+                continue
+
+            records = submitter.simulate_and_submit(
+                alphas=variants, region=region, universe=universe, auto_submit=False,
+            )
+            for variant, record in zip(variants, records):
+                sim_status = getattr(record.simulate_result, "status", "")
+                if sim_status in ("TIMEOUT", "ERROR", "FAILED") and record.simulate_result.sharpe == 0:
+                    continue
+                meets = criteria.check(record.simulate_result)
+                self.store.create_experiment({
+                    "idea_id": experiment["idea_id"],
+                    "alpha_name": f"refined_{variant.get('name', 'v')}",
+                    "alpha_expression": record.expression,
+                    "implementation_notes": f"refined from experiment {experiment['id']}",
+                    "status": "promising" if meets else "rejected",
+                    "sharpe": record.simulate_result.sharpe,
+                    "fitness": record.simulate_result.fitness,
+                    "turnover": record.simulate_result.turnover,
+                    "drawdown": record.simulate_result.drawdown,
+                    "returns": record.simulate_result.returns,
+                    "wq_alpha_id": record.alpha_id,
+                })
+                refined_count += 1
+
+            self.store.add_event(
+                level="info", kind="engineer_refinement",
+                message=f"refined experiment {experiment['id']}: generated {len(records)} variants",
+                payload={
+                    "parent_experiment_id": experiment["id"],
+                    "parent_expression": experiment.get("alpha_expression"),
+                    "parent_sharpe": experiment.get("sharpe"),
+                    "variants": len(records),
+                },
+            )
+        return refined_count
+
+    def _generate_refinement_variants(
+        self,
+        provider: BaseLLMProvider,
+        experiment: Dict[str, Any],
+        criteria: SubmissionCriteria,
+    ) -> List[Dict[str, Any]]:
+        """Ask LLM to fix a near-miss alpha expression."""
+        system_prompt = (
+            "You are a quant engineer for WorldQuant BRAIN. "
+            "Given a near-miss alpha expression, generate 2 improved variants.\n"
+            "Return JSON only: a list with name, expression, category, type.\n\n"
+            "ACCEPTANCE CRITERIA:\n"
+            f"  Sharpe >= {criteria.min_sharpe}, Fitness >= {criteria.min_fitness}, "
+            f"Turnover <= {criteria.max_turnover}\n\n"
+            "FIX STRATEGIES:\n"
+            "- If turnover too high: wrap with group_neutralize(sector, ...), use longer ts windows, add ts_mean smoothing.\n"
+            "- If fitness too low: combine with a second uncorrelated signal, add rank() wrapper.\n"
+            "- Keep the core signal idea intact, only adjust structure."
+        )
+        user_prompt = (
+            f"Near-miss alpha to improve:\n"
+            f"  Expression: {experiment.get('alpha_expression')}\n"
+            f"  Sharpe: {experiment.get('sharpe')}, Fitness: {experiment.get('fitness')}, "
+            f"Turnover: {experiment.get('turnover')}, Drawdown: {experiment.get('drawdown')}\n"
+            f"  Problem: {'turnover too high' if (experiment.get('turnover') or 0) > criteria.max_turnover else 'fitness too low'}\n"
+            f"Generate 2 fixed variants."
+        )
+        try:
+            raw = provider.generate(system_prompt, user_prompt)
+            payload = json.loads(extract_json(raw))
+            return [self._normalize_alpha_candidate(item) for item in payload[:2]]
+        except Exception:
+            return []
+
     def run_reviewer_cycle(self) -> str:
         limit = int(self.config["app"].get("default_claim_limit", 3))
-
-        # Phase 1: handle promising experiments (accept / submit)
         experiments = self.store.claim_promising_experiments(limit=limit)
+        if not experiments:
+            return "no promising experiments"
+
         accepted = 0
         submitted = 0
         for index, experiment in enumerate(experiments, start=1):
@@ -1862,152 +2184,203 @@ class AgentRuntime:
             )
             accepted += 1
 
-        # Phase 2: refine near-miss experiments (high sharpe but failed on turnover/fitness)
-        refined = self._refine_near_misses()
-
-        if not experiments and not refined:
-            return "no promising experiments"
-
         self.store.add_event(
             level="info",
             kind="reviewer",
-            message=f"reviewer accepted {accepted}, submitted {submitted}, refined {refined}",
+            message=f"reviewer accepted {accepted}, submitted {submitted}",
         )
-        return f"accepted={accepted}, submitted={submitted}, refined={refined}"
+        return f"accepted={accepted}, submitted={submitted}"
 
-    def _refine_near_misses(self) -> int:
-        """Find rejected experiments that were close to passing and generate variants."""
-        criteria = self._criteria()
-        conn = self.store._connect()
-        near_misses = conn.execute(
-            """
-            SELECT e.*, i.title AS idea_title
-            FROM experiments e
-            JOIN ideas i ON i.id = e.idea_id
-            WHERE e.status = 'rejected'
-              AND e.sharpe >= ?
-              AND (e.turnover > ? OR e.fitness < ?)
-              AND e.id NOT IN (
-                  SELECT CAST(json_extract(payload_json, '$.parent_experiment_id') AS INTEGER)
-                  FROM events
-                  WHERE kind = 'reviewer_refinement'
-                    AND json_extract(payload_json, '$.parent_experiment_id') IS NOT NULL
-              )
-            ORDER BY e.sharpe DESC
-            LIMIT 2
-            """,
-            (criteria.min_sharpe * 0.6, criteria.max_turnover, criteria.min_fitness),
-        ).fetchall()
-        conn.close()
+    def run_analyst_cycle(self) -> str:
+        analyst_config = self.config.get("agents", {}).get("analyst", {})
+        review_every_n = int(analyst_config.get("review_every_n_experiments", 20))
 
-        if not near_misses:
-            return 0
+        new_experiments = self.store.experiment_count_since("analyst_strategy")
+        if new_experiments < review_every_n:
+            return f"waiting ({new_experiments}/{review_every_n} new experiments)"
 
-        client = None
-        try:
-            client = self._worldquant_client()
-        except Exception:
-            return 0
-        if not client:
-            return 0
+        self.store.set_agent_status("analyst", "running", "deep review in progress")
 
-        profile_name = self.config.get("agents", {}).get("reviewer", {}).get("llm_profile")
+        all_experiments = self.store.all_experiments()
+        if not all_experiments:
+            return "no experiments to analyze"
+
+        # Build statistical summary
+        stats = self._build_experiment_stats(all_experiments)
+
+        # Ask LLM for strategic analysis
+        profile_name = analyst_config.get("llm_profile")
         provider = create_llm_provider(self.config, profile_name)
         provider_info = describe_llm_profile(self.config, profile_name, provider)
         self.store.add_event(
             level="info",
-            kind="reviewer",
-            message=(
-                "reviewer using llm profile "
-                f"{provider_info['profile']} ({provider_info['provider']}) model={provider_info['model_name']}"
-            ),
+            kind="analyst",
+            message=f"analyst using llm profile {provider_info['profile']} ({provider_info['provider']}) model={provider_info['model_name']}",
             payload=provider_info,
         )
 
-        refined_count = 0
-        for experiment in [dict(r) for r in near_misses]:
-            self.store.set_agent_status(
-                "reviewer", "running",
-                f"refining near-miss: {experiment.get('alpha_name', '?')} (sharpe={experiment.get('sharpe')})",
-            )
-            variants = self._generate_refinement_variants(provider, experiment, criteria)
-            if not variants:
-                continue
+        strategy = self._generate_research_strategy(provider, stats, all_experiments)
+        if not strategy:
+            return "llm failed, no strategy generated"
 
-            submitter = AlphaSubmitter(
-                client, criteria=criteria,
-                results_dir=str(self.state_dir), enable_learning=True,
-            )
-            region = Region(self.config["integrations"]["worldquant"].get("region", "USA"))
-            universe = Unviverse(self.config["integrations"]["worldquant"].get("universe", "TOP3000"))
-            records = submitter.simulate_and_submit(
-                alphas=variants, region=region, universe=universe, auto_submit=False,
-            )
-            for variant, record in zip(variants, records):
-                sim_status = getattr(record.simulate_result, "status", "")
-                if sim_status in ("TIMEOUT", "ERROR", "FAILED") and record.simulate_result.sharpe == 0:
-                    continue
-                meets = criteria.check(record.simulate_result)
-                self.store.create_experiment({
-                    "idea_id": experiment["idea_id"],
-                    "alpha_name": f"refined_{variant.get('name', 'v')}",
-                    "alpha_expression": record.expression,
-                    "implementation_notes": f"refined from experiment {experiment['id']}",
-                    "status": "promising" if meets else "rejected",
-                    "sharpe": record.simulate_result.sharpe,
-                    "fitness": record.simulate_result.fitness,
-                    "turnover": record.simulate_result.turnover,
-                    "drawdown": record.simulate_result.drawdown,
-                    "returns": record.simulate_result.returns,
-                    "wq_alpha_id": record.alpha_id,
-                })
-                refined_count += 1
+        strategy["stats"] = stats
+        strategy["experiment_count"] = len(all_experiments)
+        strategy["generated_at"] = utc_now()
 
-            self.store.add_event(
-                level="info", kind="reviewer_refinement",
-                message=f"refined experiment {experiment['id']}: generated {len(records)} variants",
-                payload={
-                    "parent_experiment_id": experiment["id"],
-                    "parent_expression": experiment.get("alpha_expression"),
-                    "parent_sharpe": experiment.get("sharpe"),
-                    "variants": len(records),
-                },
-            )
-        return refined_count
+        self.store.add_event(
+            level="info",
+            kind="analyst_strategy",
+            message=f"analyst reviewed {len(all_experiments)} experiments, updated research strategy",
+            payload=strategy,
+        )
+        self.store.add_event(
+            level="info",
+            kind="analyst",
+            message=f"strategy updated: {strategy.get('headline', 'new strategy')}",
+        )
 
-    def _generate_refinement_variants(
+        return f"analyzed {len(all_experiments)} experiments, strategy updated"
+
+    def _build_experiment_stats(self, experiments: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Compute aggregate statistics across all experiments."""
+        by_status: Dict[str, int] = {}
+        by_category: Dict[str, Dict[str, Any]] = {}
+        sharpes: List[float] = []
+        turnovers: List[float] = []
+        fitnesses: List[float] = []
+
+        for e in experiments:
+            status = e.get("status", "unknown")
+            by_status[status] = by_status.get(status, 0) + 1
+
+            sharpe = e.get("sharpe")
+            turnover = e.get("turnover")
+            fitness = e.get("fitness")
+            if isinstance(sharpe, (int, float)):
+                sharpes.append(float(sharpe))
+            if isinstance(turnover, (int, float)):
+                turnovers.append(float(turnover))
+            if isinstance(fitness, (int, float)):
+                fitnesses.append(float(fitness))
+
+            # Group by category (extracted from implementation_notes or alpha_name)
+            notes = e.get("implementation_notes") or ""
+            cat = "unknown"
+            if "category=" in notes:
+                cat = notes.split("category=")[1].split(";")[0].strip()
+            cat_stats = by_category.setdefault(cat, {"total": 0, "promising": 0, "rejected": 0, "sharpes": []})
+            cat_stats["total"] += 1
+            if status == "promising" or status in ("accepted", "submitted"):
+                cat_stats["promising"] += 1
+            elif status == "rejected":
+                cat_stats["rejected"] += 1
+            if isinstance(sharpe, (int, float)):
+                cat_stats["sharpes"].append(float(sharpe))
+
+        # Compute category success rates
+        category_summary = {}
+        for cat, cs in by_category.items():
+            avg_sharpe = sum(cs["sharpes"]) / len(cs["sharpes"]) if cs["sharpes"] else 0
+            success_rate = cs["promising"] / cs["total"] if cs["total"] else 0
+            category_summary[cat] = {
+                "total": cs["total"],
+                "promising": cs["promising"],
+                "rejected": cs["rejected"],
+                "success_rate": round(success_rate, 3),
+                "avg_sharpe": round(avg_sharpe, 3),
+            }
+
+        # Find top performing expressions
+        sorted_by_sharpe = sorted(
+            [e for e in experiments if isinstance(e.get("sharpe"), (int, float))],
+            key=lambda e: e["sharpe"],
+            reverse=True,
+        )
+        top_expressions = [
+            {
+                "expression": e.get("alpha_expression", "")[:120],
+                "sharpe": e.get("sharpe"),
+                "fitness": e.get("fitness"),
+                "turnover": e.get("turnover"),
+                "status": e.get("status"),
+            }
+            for e in sorted_by_sharpe[:5]
+        ]
+
+        # Find most common failure patterns
+        high_turnover_count = sum(1 for e in experiments if (e.get("turnover") or 0) > 0.7 and e.get("status") == "rejected")
+        low_fitness_count = sum(1 for e in experiments if (e.get("fitness") or 0) < 0.7 and e.get("status") == "rejected")
+        low_sharpe_count = sum(1 for e in experiments if (e.get("sharpe") or 0) < 1.25 and e.get("status") == "rejected")
+
+        return {
+            "total": len(experiments),
+            "by_status": by_status,
+            "avg_sharpe": round(sum(sharpes) / len(sharpes), 3) if sharpes else 0,
+            "avg_turnover": round(sum(turnovers) / len(turnovers), 3) if turnovers else 0,
+            "avg_fitness": round(sum(fitnesses) / len(fitnesses), 3) if fitnesses else 0,
+            "category_summary": category_summary,
+            "top_expressions": top_expressions,
+            "failure_breakdown": {
+                "high_turnover": high_turnover_count,
+                "low_fitness": low_fitness_count,
+                "low_sharpe": low_sharpe_count,
+            },
+        }
+
+    def _generate_research_strategy(
         self,
         provider: BaseLLMProvider,
-        experiment: Dict[str, Any],
-        criteria: SubmissionCriteria,
-    ) -> List[Dict[str, Any]]:
-        """Ask LLM to fix a near-miss alpha expression."""
+        stats: Dict[str, Any],
+        experiments: List[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """Use LLM to produce a strategic research direction from full experiment history."""
+        criteria = self._criteria()
+
+        # Build a condensed experiment history for the LLM
+        exp_summary = []
+        for e in experiments[-50:]:  # last 50 experiments for context window
+            exp_summary.append({
+                "name": e.get("alpha_name", "")[:48],
+                "expr": (e.get("alpha_expression") or "")[:100],
+                "sharpe": e.get("sharpe"),
+                "fitness": e.get("fitness"),
+                "turnover": e.get("turnover"),
+                "status": e.get("status"),
+            })
+
         system_prompt = (
-            "You are a quant reviewer for WorldQuant BRAIN. "
-            "Given a near-miss alpha expression, generate 2 improved variants.\n"
-            "Return JSON only: a list with name, expression, category, type.\n\n"
+            "You are a senior quant strategist reviewing the full experiment history of a WorldQuant BRAIN alpha research system.\n"
+            "Your job: analyze patterns across ALL experiments and produce a strategic research direction.\n\n"
             "ACCEPTANCE CRITERIA:\n"
-            f"  Sharpe >= {criteria.min_sharpe}, Fitness >= {criteria.min_fitness}, "
-            f"Turnover <= {criteria.max_turnover}\n\n"
-            "FIX STRATEGIES:\n"
-            "- If turnover too high: wrap with group_neutralize(sector, ...), use longer ts windows, add ts_mean smoothing.\n"
-            "- If fitness too low: combine with a second uncorrelated signal, add rank() wrapper.\n"
-            "- Keep the core signal idea intact, only adjust structure."
+            f"  Sharpe >= {criteria.min_sharpe}, Fitness >= {criteria.min_fitness}, Turnover <= {criteria.max_turnover}\n\n"
+            "Your analysis must cover:\n"
+            "1. WINNING PATTERNS: What operator combinations, field choices, and structural patterns appear in successful alphas?\n"
+            "2. LOSING PATTERNS: What patterns consistently fail? What should be permanently avoided?\n"
+            "3. COVERAGE GAPS: What alpha categories or signal types are underexplored?\n"
+            "4. STRATEGIC DIRECTION: Concrete recommendations for the next batch of research ideas.\n"
+            "5. PRIORITY SHIFTS: Should the researcher focus more on momentum, mean-reversion, fundamental, or hybrid signals?\n\n"
+            "Return JSON with these exact keys:\n"
+            "  headline: one-line summary of the strategy\n"
+            "  winning_patterns: list of strings describing what works\n"
+            "  losing_patterns: list of strings describing what to avoid\n"
+            "  coverage_gaps: list of underexplored areas worth trying\n"
+            "  strategic_directions: list of concrete next-step recommendations\n"
+            "  priority_categories: ordered list of categories to focus on (best first)\n"
+            "  operator_preferences: list of preferred operator combinations\n"
+            "  avoid_operators: list of operator patterns that consistently fail"
         )
         user_prompt = (
-            f"Near-miss alpha to improve:\n"
-            f"  Expression: {experiment.get('alpha_expression')}\n"
-            f"  Sharpe: {experiment.get('sharpe')}, Fitness: {experiment.get('fitness')}, "
-            f"Turnover: {experiment.get('turnover')}, Drawdown: {experiment.get('drawdown')}\n"
-            f"  Problem: {'turnover too high' if (experiment.get('turnover') or 0) > criteria.max_turnover else 'fitness too low'}\n"
-            f"Generate 2 fixed variants."
+            f"Experiment statistics:\n{json.dumps(stats, ensure_ascii=False, indent=2)}\n\n"
+            f"Recent experiment history (last {len(exp_summary)}):\n"
+            f"{json.dumps(exp_summary, ensure_ascii=False, indent=2)}"
         )
         try:
             raw = provider.generate(system_prompt, user_prompt)
-            payload = json.loads(extract_json(raw))
-            return [self._normalize_alpha_candidate(item) for item in payload[:2]]
-        except Exception:
-            return []
+            return json.loads(extract_json(raw))
+        except Exception as exc:
+            logger.warning("analyst LLM failed: %s", exc)
+            self.store.add_event(level="error", kind="analyst", message=f"LLM call failed: {exc}")
+            return None
 
 
 def extract_json(text: str) -> str:

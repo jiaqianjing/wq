@@ -16,7 +16,9 @@ from datetime import datetime
 import logging
 import os
 
-from .client import WorldQuantBrainClient, AlphaConfig, SimulateResult, Region, Unviverse, Delay
+from .client import WorldQuantBrainClient, AlphaConfig, SimulateResult, Region, Universe, Delay
+
+logger = logging.getLogger(__name__)
 
 try:
     from .learning import AlphaDatabase, AlphaRecord
@@ -24,8 +26,6 @@ try:
 except ImportError:
     LEARNING_ENABLED = False
     logger.warning("学习模块未启用")
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -95,7 +95,7 @@ class AlphaSubmitter:
 
     def simulate_and_submit(self, alphas: List[Dict],
                            region: Region = Region.USA,
-                           universe: Unviverse = Unviverse.TOP3000,
+                           universe: Universe = Universe.TOP3000,
                            auto_submit: bool = True,
                            check_correlation: bool = True,
                            max_correlation: float = 0.7,
@@ -200,7 +200,7 @@ class AlphaSubmitter:
 
     def batch_submit_by_type(self, alphas_by_type: Dict[str, List[Dict]],
                             region: Region = Region.USA,
-                            universe: Unviverse = Unviverse.TOP3000,
+                            universe: Universe = Universe.TOP3000,
                             auto_submit: bool = True) -> Dict[str, List[SubmissionRecord]]:
         """
         按类型批量提交 Alpha
@@ -299,7 +299,7 @@ class AlphaSubmitter:
         logger.debug(f"进度已保存到: {filename}")
 
     def _save_to_learning_db(self, alpha: Dict, result: SimulateResult,
-                            region: Region, universe: Unviverse,
+                            region: Region, universe: Universe,
                             settings: AlphaSettings, submitted: bool):
         """保存结果到学习数据库"""
         if not self.db:
