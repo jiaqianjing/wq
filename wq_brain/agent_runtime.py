@@ -2141,6 +2141,13 @@ class AgentRuntime:
         if not experiments:
             return "no promising experiments"
 
+        client = None
+        try:
+            client = self._worldquant_client()
+        except Exception as exc:
+            self.store.add_event(level="warning", kind="reviewer", message=f"worldquant unavailable: {exc}")
+        auto_submit = bool(self.config.get("integrations", {}).get("worldquant", {}).get("auto_submit", True))
+
         accepted = 0
         submitted = 0
         blocked = 0
@@ -2168,13 +2175,6 @@ class AgentRuntime:
                 f"Alpha ID: `{experiment.get('wq_alpha_id') or 'n/a'}`"
             )
 
-            client = None
-            try:
-                client = self._worldquant_client()
-            except Exception as exc:
-                self.store.add_event(level="warning", kind="reviewer", message=f"worldquant unavailable: {exc}")
-
-            auto_submit = bool(self.config.get("integrations", {}).get("worldquant", {}).get("auto_submit", True))
             if client and auto_submit and experiment.get("wq_alpha_id"):
                 submit_result = client.submit_alpha_with_checks(experiment["wq_alpha_id"])
                 submit_reason = compact_submission_reason(submit_result.reason)
