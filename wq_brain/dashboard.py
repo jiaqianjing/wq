@@ -44,6 +44,14 @@ class DashboardServer:
                     if self.path == "/api/ideas":
                         self._send_json(store.list_recent_ideas())
                         return
+                    if self.path.startswith("/api/ideas/"):
+                        uid = self.path[len("/api/ideas/"):]
+                        idea = store.get_idea_by_uid(uid)
+                        if idea:
+                            self._send_json(idea)
+                        else:
+                            self._send_json({"error": "not found"}, status=404)
+                        return
                     if self.path == "/api/experiments":
                         self._send_json(store.list_recent_experiments())
                         return

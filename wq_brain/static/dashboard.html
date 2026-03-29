@@ -159,7 +159,6 @@ a{color:var(--accent2);text-decoration:none}
       <div class="nav-label">Monitor</div>
       <div class="nav-item active" data-s="overview">Overview</div>
       <div class="nav-item" data-s="ideas">Ideas<span class="ct" id="nI">0</span></div>
-      <div class="nav-item" data-s="experiments">Experiments<span class="ct" id="nE">0</span></div>
     </div>
     <div class="nav-group">
       <div class="nav-label">Intelligence</div>
@@ -190,14 +189,17 @@ a{color:var(--accent2);text-decoration:none}
     </div>
 
     <div class="section" id="sec-ideas">
-      <div class="card"><div class="card-t">Idea Queue <span class="badge" id="iC">0</span></div><div id="ideas"></div></div>
+      <div class="card"><div class="card-t">Idea Queue <span class="badge" id="iC">0</span></div>
+        <div style="margin-bottom:12px;display:flex;gap:8px">
+          <input id="ideaSearch" type="text" placeholder="Search by ID (idea-xxxxxx) or title..." style="flex:1;padding:6px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:12px;outline:none" />
+          <button id="ideaSearchBtn" style="padding:6px 14px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:12px;cursor:pointer">Search</button>
+        </div>
+        <div id="ideas"></div>
+      </div>
     </div>
 
-    <div class="section" id="sec-experiments">
-      <div class="gm">
-        <div class="card"><div class="card-t">Experiments <span class="badge" id="eC">0</span></div><div id="exps"></div></div>
-        <div class="card"><div class="card-t">Feedback <span class="badge" id="fC">0</span></div><div id="fb"></div></div>
-      </div>
+    <div class="section" id="sec-idea-detail">
+      <div class="card" id="ideaDetail"><div class="empty">Loading...</div></div>
     </div>
 
     <div class="section" id="sec-models">
@@ -225,8 +227,8 @@ a{color:var(--accent2);text-decoration:none}
   </main>
 </div>
 <script>
-const PS={ideas:8,exps:8,fb:6,evts:10,refs:3};
-const pg={ideas:0,exps:0,fb:0,evts:0,refs:0};
+const PS={ideas:8,evts:10,refs:3};
+const pg={ideas:0,evts:0,refs:0};
 let D={};
 const $=s=>document.querySelector(s),$$=s=>document.querySelectorAll(s);
 const esc=v=>String(v??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
@@ -253,14 +255,21 @@ function rStats(s){
 function rTrend(ex){
   const vals=(ex||[]).slice().reverse().map((e,i)=>({x:i,y:+(e.sharpe||0),n:e.alpha_name||""}));
   if(!vals.length){$("#trendC").innerHTML=`<div class="empty">No data</div>`;return}
-  const W=560,H=180,px=36,py=20,ys=vals.map(v=>v.y),mn=Math.min(...ys,0),mx=Math.max(...ys,1),rng=Math.max(mx-mn,.5);
+  const W=560,H=180,px=44,py=24,ys=vals.map(v=>v.y),mn=Math.min(...ys,0),mx=Math.max(...ys,1),rng=Math.max(mx-mn,.5);
   const xS=vals.length===1?0:(W-px*2)/(vals.length-1);
   const pts=vals.map((v,i)=>{const x=px+i*xS,y=H-py-((v.y-mn)/rng)*(H-py*2);return{...v,px:x,py:y}});
   const path=pts.map((p,i)=>`${i?"L":"M"}${p.px.toFixed(1)} ${p.py.toFixed(1)}`).join(" ");
   const zY=(H-py-((0-mn)/rng)*(H-py*2)).toFixed(1);
   const area=path+` L${pts.at(-1).px.toFixed(1)} ${H-py} L${pts[0].px.toFixed(1)} ${H-py} Z`;
+  // Y-axis ticks
+  const ticks=5,yTicks=[];for(let i=0;i<=ticks;i++){const v=mn+(rng*i/ticks);const ty=H-py-((v-mn)/rng)*(H-py*2);yTicks.push({v,ty})}
+  const yLabels=yTicks.map(t=>`<text x="${px-6}" y="${t.ty.toFixed(1)}" text-anchor="end" dominant-baseline="middle" fill="var(--text3)" font-size="9">${t.v.toFixed(2)}</text><line x1="${px}" y1="${t.ty.toFixed(1)}" x2="${W-px}" y2="${t.ty.toFixed(1)}" stroke="rgba(255,255,255,.04)"/>`).join("");
+  // X-axis: show first, last, and a few middle indices
+  const xLabels=[];const step=Math.max(1,Math.floor(vals.length/5));for(let i=0;i<vals.length;i+=step)xLabels.push(i);if(xLabels.at(-1)!==vals.length-1)xLabels.push(vals.length-1);
+  const xTxt=xLabels.map(i=>`<text x="${pts[i].px.toFixed(1)}" y="${H-6}" text-anchor="middle" fill="var(--text3)" font-size="9">#${i+1}</text>`).join("");
   $("#trendC").innerHTML=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
     <defs><linearGradient id="gf" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="rgba(94,234,212,.18)"/><stop offset="100%" stop-color="rgba(94,234,212,0)"/></linearGradient></defs>
+    ${yLabels}${xTxt}
     <line x1="${px}" y1="${zY}" x2="${W-px}" y2="${zY}" stroke="rgba(255,255,255,.06)" stroke-dasharray="3 3"/>
     <path d="${area}" fill="url(#gf)"/><path d="${path}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
     ${pts.map(p=>`<circle cx="${p.px.toFixed(1)}" cy="${p.py.toFixed(1)}" r="3" fill="var(--accent2)"/>`).join("")}</svg>`;
@@ -289,32 +298,48 @@ function rStratBanner(st){
 }
 
 function rIdeas(items){
-  const list=items||[],vis=paged("ideas",list);
-  if(!list.length){$("#ideas").innerHTML=`<div class="empty">No ideas</div>`;return}
-  let h=`<table class="tbl"><thead><tr><th>Title</th><th>Model</th><th>Source</th><th>Status</th><th>Created</th></tr></thead><tbody>`;
-  vis.forEach(i=>{h+=`<tr><td><strong style="font-size:12px">${esc(i.title)}</strong><div class="small muted" style="margin-top:3px;max-width:360px">${esc((i.summary||"").slice(0,120))}</div></td><td>${modelChip(i.llm_model)}</td><td class="small muted">${esc(i.source_kind||"-")}</td><td>${chip(i.status)}</td><td class="mono small">${ts(i.created_at)}</td></tr>`});
-  h+=`</tbody></table>${pgr("ideas",list.length)}`;
+  const list=items||[],q=($("#ideaSearch").value||"").trim().toLowerCase();
+  const filtered=q?list.filter(i=>(i.uid||"").toLowerCase().includes(q)||(i.title||"").toLowerCase().includes(q)):list;
+  const vis=paged("ideas",filtered);
+  if(!filtered.length){$("#ideas").innerHTML=`<div class="empty">${q?"No matching ideas":"No ideas"}</div>`;$("#iC").textContent=list.length;$("#nI").textContent=list.length;return}
+  let h=`<table class="tbl"><thead><tr><th>ID</th><th>Title</th><th>Model</th><th>Source</th><th>Status</th><th>Created</th></tr></thead><tbody>`;
+  vis.forEach(i=>{h+=`<tr style="cursor:pointer" data-uid="${esc(i.uid||"")}"><td class="mono small" style="color:var(--accent2)">${esc(i.uid||"-")}</td><td><strong style="font-size:12px">${esc(i.title)}</strong><div class="small muted" style="margin-top:3px;max-width:360px">${esc((i.summary||"").slice(0,120))}</div></td><td>${modelChip(i.llm_model)}</td><td class="small muted">${esc(i.source_kind||"-")}</td><td>${chip(i.status)}</td><td class="mono small">${ts(i.created_at)}</td></tr>`});
+  h+=`</tbody></table>${pgr("ideas",filtered.length)}`;
   $("#ideas").innerHTML=h;
   $("#iC").textContent=list.length;$("#nI").textContent=list.length;
 }
-function rExps(items){
-  const list=items||[],vis=paged("exps",list);
-  if(!list.length){$("#exps").innerHTML=`<div class="empty">No experiments</div>`;return}
-  let h=`<table class="tbl"><thead><tr><th>Idea</th><th>Alpha</th><th>Expr</th><th>S</th><th>F</th><th>T</th><th>Model</th><th>Status</th></tr></thead><tbody>`;
-  vis.forEach(e=>{h+=`<tr><td class="small">${esc((e.idea_title||"").slice(0,40))}</td><td class="mono small">${esc((e.alpha_name||"").slice(0,24))}</td><td class="mono small" style="max-width:220px;word-break:break-all">${esc((e.alpha_expression||"").slice(0,80))}</td><td>${esc(e.sharpe??"-")}</td><td>${esc(e.fitness??"-")}</td><td>${esc(e.turnover??"-")}</td><td>${modelChip(e.llm_model)}</td><td>${chip(e.status)}</td></tr>`});
-  h+=`</tbody></table>${pgr("exps",list.length)}`;
-  $("#exps").innerHTML=h;
-  $("#eC").textContent=list.length;$("#nE").textContent=list.length;
-}
-function rFb(items){
-  const list=items||[],vis=paged("fb",list);
-  if(!list.length){$("#fb").innerHTML=`<div class="empty">No feedback</div>`;return}
-  let h=`<div style="max-height:380px;overflow-y:auto">`;
-  vis.forEach(f=>{h+=`<div class="kv"><span class="k" style="flex:1;min-width:0"><strong>${esc((f.idea_title||"").slice(0,36))}</strong><br><span class="mono muted">${esc((f.alpha_name||"").slice(0,24))}</span></span><span style="display:flex;gap:4px;align-items:center;flex-shrink:0"><span class="chip c-d">S${esc(f.sharpe??"-")}</span><span class="chip c-d">F${esc(f.fitness??"-")}</span>${chip(f.status)}</span></div>`});
-  h+=`</div>${pgr("fb",list.length)}`;
-  $("#fb").innerHTML=h;$("#fC").textContent=list.length;
-}
 
+async function showIdeaDetail(uid){
+  $$(".section").forEach(s=>s.classList.remove("active"));
+  $("#sec-idea-detail").classList.add("active");
+  $$(".nav-item").forEach(n=>n.classList.remove("active"));
+  const el=$("#ideaDetail");
+  el.innerHTML=`<div class="empty">Loading...</div>`;
+  try{
+    const d=await api("/api/ideas/"+encodeURIComponent(uid));
+    if(d.error){el.innerHTML=`<div class="empty">Idea not found</div>`;return}
+    const exps=d.experiments||[];
+    let h=`<div style="margin-bottom:12px"><button id="backToIdeas" style="padding:4px 12px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:12px;cursor:pointer">← Back</button></div>`;
+    h+=`<div class="card-t" style="margin-bottom:16px"><span style="color:var(--accent2);font-family:monospace">${esc(d.uid)}</span> ${chip(d.status)}</div>`;
+    h+=`<h3 style="font-size:16px;font-weight:700;margin-bottom:8px">${esc(d.title)}</h3>`;
+    h+=`<p class="small muted" style="margin-bottom:12px">${esc(d.summary)}</p>`;
+    if(d.rationale)h+=`<div style="margin-bottom:12px"><div class="small" style="font-weight:700;color:var(--text3);margin-bottom:4px">RATIONALE</div><p class="small muted">${esc(d.rationale)}</p></div>`;
+    h+=`<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px;font-size:12px">`;
+    h+=`<span class="muted">Source: <strong>${esc(d.source_kind||"-")}</strong></span>`;
+    h+=`<span class="muted">Priority: <strong>${d.priority}</strong></span>`;
+    h+=`<span class="muted">Model: ${modelChip(d.llm_model)}</span>`;
+    h+=`<span class="muted">Created: <span class="mono">${ts(d.created_at)}</span></span>`;
+    h+=`</div>`;
+    if(d.agent_notes)h+=`<div style="margin-bottom:16px"><div class="small" style="font-weight:700;color:var(--text3);margin-bottom:4px">AGENT NOTES</div><pre class="code">${esc(d.agent_notes)}</pre></div>`;
+    if(exps.length){
+      h+=`<div class="card-t" style="margin-top:16px">Experiments <span class="badge">${exps.length}</span></div>`;
+      h+=`<table class="tbl"><thead><tr><th>Alpha</th><th>Expression</th><th>Sharpe</th><th>Fitness</th><th>Turnover</th><th>Status</th></tr></thead><tbody>`;
+      exps.forEach(e=>{h+=`<tr><td class="small">${esc(e.alpha_name||"-")}</td><td class="mono small" style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(e.alpha_expression||"-")}</td><td class="mono small">${e.sharpe??"-"}</td><td class="mono small">${e.fitness??"-"}</td><td class="mono small">${e.turnover??"-"}</td><td>${chip(e.status)}</td></tr>`});
+      h+=`</tbody></table>`;
+    }else{h+=`<div class="empty" style="margin-top:16px">No experiments yet</div>`}
+    el.innerHTML=h;
+  }catch(e){el.innerHTML=`<div class="empty">Error loading idea</div>`}
+}
 function rModelCmp(stats){
   const el=$("#modelCmp");
   if(!stats||!stats.length){el.innerHTML=`<div class="empty">No model data yet</div>`;return}
@@ -407,12 +432,17 @@ document.addEventListener("click",e=>{
   if(nav){$$(".nav-item").forEach(n=>n.classList.toggle("active",n===nav));$$(".section").forEach(s=>s.classList.toggle("active",s.id==="sec-"+nav.dataset.s));return}
   const pb=e.target.closest("[data-pg]");
   if(pb){pg[pb.dataset.pg]=Math.max(0,pg[pb.dataset.pg]+Number(pb.dataset.d||0));render();return}
+  const row=e.target.closest("tr[data-uid]");
+  if(row&&row.dataset.uid){showIdeaDetail(row.dataset.uid);return}
+  if(e.target.id==="backToIdeas"){$$(".section").forEach(s=>s.classList.remove("active"));$("#sec-ideas").classList.add("active");$$(".nav-item").forEach(n=>n.classList.toggle("active",n.dataset.s==="ideas"));return}
+  if(e.target.id==="ideaSearchBtn"){pg.ideas=0;render();return}
 });
+document.addEventListener("keydown",e=>{if(e.target.id==="ideaSearch"&&e.key==="Enter"){pg.ideas=0;render()}});
 
 function render(){
-  const{summary:s,ideas:i,experiments:ex,feedback:f,events:ev,reflections:rf,config:cf,logs:lg,strategy:st,modelStats:ms}=D;
+  const{summary:s,ideas:i,experiments:ex,events:ev,reflections:rf,config:cf,logs:lg,strategy:st,modelStats:ms}=D;
   if(s){rStats(s);rMix(s);rAgents(s.agents||[]);rBest(s.best_experiment);rErr(s.agents||[])}
-  rTrend(ex);rIdeas(i);rExps(ex);rFb(f);rEvts(ev);rRefs(rf);rStratBanner(st);rStratFull(st||{});
+  rTrend(ex);rIdeas(i);rEvts(ev);rRefs(rf);rStratBanner(st);rStratFull(st||{});
   rModelCmp(ms);rModelIdeas(i,ms);
   if(cf)$("#cfgV").textContent=JSON.stringify(cf,null,2);
   if(lg)$("#logV").textContent=(lg||{}).tail||"";
@@ -420,12 +450,12 @@ function render(){
 
 async function refresh(){
   try{
-    const[summary,ideas,experiments,feedback,events,reflections,config,logs,strategy,modelStats]=await Promise.all([
-      api("/api/summary"),api("/api/ideas"),api("/api/experiments"),api("/api/feedback"),
+    const[summary,ideas,experiments,events,reflections,config,logs,strategy,modelStats]=await Promise.all([
+      api("/api/summary"),api("/api/ideas"),api("/api/experiments"),
       api("/api/events"),api("/api/reflections"),api("/api/config"),api("/api/logs"),
       api("/api/strategy"),api("/api/model-stats")
     ]);
-    D={summary,ideas,experiments,feedback,events,reflections,config,logs,strategy,modelStats};
+    D={summary,ideas,experiments,events,reflections,config,logs,strategy,modelStats};
     render();
   }catch(e){console.warn("refresh",e)}
 }

@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import signal
 import sqlite3
 import subprocess
@@ -42,6 +43,10 @@ logger = logging.getLogger(__name__)
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def generate_idea_uid() -> str:
+    return f"idea-{secrets.token_hex(3)}"
 
 
 def ensure_directory(path: Path) -> Path:
@@ -272,6 +277,7 @@ class RuntimeStore:
 
             CREATE TABLE IF NOT EXISTS ideas (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uid TEXT NOT NULL DEFAULT '',
                 title TEXT NOT NULL,
                 summary TEXT NOT NULL,
                 rationale TEXT,
@@ -332,6 +338,12 @@ class RuntimeStore:
         existing_idea_cols = {row[1] for row in conn.execute("PRAGMA table_info(ideas)").fetchall()}
         if "llm_model" not in existing_idea_cols:
             conn.execute("ALTER TABLE ideas ADD COLUMN llm_model TEXT")
+            conn.commit()
+        if "uid" not in existing_idea_cols:
+            conn.execute("ALTER TABLE ideas ADD COLUMN uid TEXT NOT NULL DEFAULT ''")
+            # Backfill existing rows
+            for row in conn.execute("SELECT id FROM ideas WHERE uid = ''").fetchall():
+                conn.execute("UPDATE ideas SET uid = ? WHERE id = ?", (generate_idea_uid(), row[0]))
             conn.commit()
         existing_exp_cols = {row[1] for row in conn.execute("PRAGMA table_info(experiments)").fetchall()}
         if "llm_model" not in existing_exp_cols:
@@ -431,11 +443,12 @@ class RuntimeStore:
             cur.execute(
                 """
                 INSERT INTO ideas (
-                    title, summary, rationale, source_kind, source_title, source_url,
+                    uid, title, summary, rationale, source_kind, source_title, source_url,
                     status, priority, agent_notes, llm_model, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
+                    generate_idea_uid(),
                     idea["title"],
                     idea["summary"],
                     idea.get("rationale", ""),
@@ -656,6 +669,21 @@ class RuntimeStore:
             return cached[:limit]
         return self._recent_ideas_from_db(limit)
 
+    def get_idea_by_uid(self, uid: str) -> Optional[Dict[str, Any]]:
+        conn = self._connect()
+        row = conn.execute("SELECT * FROM ideas WHERE uid = ?", (uid,)).fetchone()
+        if not row:
+            conn.close()
+            return None
+        idea = dict(row)
+        idea["experiments"] = [
+            dict(r) for r in conn.execute(
+                "SELECT * FROM experiments WHERE idea_id = ? ORDER BY created_at DESC", (idea["id"],)
+            ).fetchall()
+        ]
+        conn.close()
+        return idea
+
     def _recent_ideas_from_db(self, limit: int = 20) -> List[Dict[str, Any]]:
         conn = self._connect()
         rows = conn.execute(
@@ -831,18 +859,45 @@ class RuntimeStore:
         return count
 
     def latest_analyst_strategy(self) -> Optional[Dict[str, Any]]:
-        """Return the most recent analyst strategy payload, or None."""
+        """Return the most recent analyst strategy payload with live stats."""
         conn = self._connect()
         row = conn.execute(
             "SELECT payload_json FROM events WHERE kind = 'analyst_strategy' ORDER BY created_at DESC LIMIT 1"
         ).fetchone()
-        conn.close()
         if not row:
+            conn.close()
             return None
         try:
-            return json.loads(row["payload_json"])
+            data = json.loads(row["payload_json"])
         except (json.JSONDecodeError, TypeError):
+            conn.close()
             return None
+        # Refresh headline stats with live data so the dashboard stays current
+        live = conn.execute(
+            """
+            SELECT COUNT(*) AS total,
+                   ROUND(AVG(sharpe), 3) AS avg_sharpe,
+                   ROUND(AVG(fitness), 3) AS avg_fitness,
+                   ROUND(AVG(turnover), 3) AS avg_turnover,
+                   SUM(CASE WHEN status='rejected' AND turnover > 0.7 THEN 1 ELSE 0 END) AS high_turnover,
+                   SUM(CASE WHEN status='rejected' AND fitness < 0.7 THEN 1 ELSE 0 END) AS low_fitness,
+                   SUM(CASE WHEN status='rejected' AND sharpe < 1.25 THEN 1 ELSE 0 END) AS low_sharpe
+            FROM experiments
+            """
+        ).fetchone()
+        conn.close()
+        if live and live["total"]:
+            stats = data.setdefault("stats", {})
+            stats["total"] = live["total"]
+            stats["avg_sharpe"] = live["avg_sharpe"] or 0
+            stats["avg_fitness"] = live["avg_fitness"] or 0
+            stats["avg_turnover"] = live["avg_turnover"] or 0
+            fb = stats.setdefault("failure_breakdown", {})
+            fb["high_turnover"] = live["high_turnover"] or 0
+            fb["low_fitness"] = live["low_fitness"] or 0
+            fb["low_sharpe"] = live["low_sharpe"] or 0
+            data["experiment_count"] = live["total"]
+        return data
 
     def all_experiments(self) -> List[Dict[str, Any]]:
         """Return all experiments with idea titles for analyst deep review."""
@@ -1814,14 +1869,15 @@ class AgentRuntime:
         except Exception as exc:
             self.store.add_event(level="warning", kind="engineer", message=f"worldquant unavailable: {exc}")
 
+        provider_info = describe_llm_profile(self.config, profile_name, provider)
+        eng_model_label = f"{provider_info.get('provider', '')}:{provider_info.get('model_name', '')}".strip(":")
+
         if not claimed_ideas:
             # No new ideas, but still try to refine near-misses
-            refined = self._refine_near_misses(provider, client)
+            refined = self._refine_near_misses(provider, client, model_label=eng_model_label)
             if not refined:
                 return "no queued ideas"
             return f"claimed_ideas=0, experiments=0, refined={refined}"
-
-        provider_info = describe_llm_profile(self.config, profile_name, provider)
         self.store.add_event(
             level="info",
             kind="engineer",
@@ -1832,7 +1888,6 @@ class AgentRuntime:
             payload=provider_info,
         )
         alpha_batch_size = int(self.config.get("agents", {}).get("engineer", {}).get("alpha_batch_size", 4))
-        eng_model_label = f"{provider_info.get('provider', '')}:{provider_info.get('model_name', '')}".strip(":")
 
         criteria = self._criteria()
         results = []
@@ -1850,6 +1905,7 @@ class AgentRuntime:
                         "alpha_name": alpha_candidates[0]["name"],
                         "alpha_expression": alpha_candidates[0]["expression"],
                         "implementation_notes": "WorldQuant credentials unavailable during engineer cycle",
+                        "llm_model": eng_model_label,
                         "status": "blocked",
                     }
                 )
@@ -1892,6 +1948,19 @@ class AgentRuntime:
                         kind="engineer",
                         message=f"simulation {sim_status} for {alpha_candidate.get('name', '?')}, skipping",
                     )
+                    self.store.create_experiment(
+                        {
+                            "idea_id": idea["id"],
+                            "alpha_name": alpha_candidate.get("name", "?"),
+                            "alpha_expression": record.expression,
+                            "implementation_notes": f"simulation {sim_status}",
+                            "llm_model": eng_model_label,
+                            "status": "error",
+                            "sharpe": 0,
+                            "fitness": 0,
+                            "turnover": 0,
+                        }
+                    )
                     continue
                 meets_threshold = criteria.check(record.simulate_result)
                 experiment_id = self.store.create_experiment(
@@ -1926,7 +1995,7 @@ class AgentRuntime:
             )
 
         # Phase 2: refine near-miss experiments (high sharpe but failed on turnover/fitness)
-        refined = self._refine_near_misses(provider, client)
+        refined = self._refine_near_misses(provider, client, model_label=eng_model_label)
 
         self.store.add_event(
             level="info",
@@ -2078,7 +2147,7 @@ class AgentRuntime:
                 result.append(c)
         return result if result else candidates[:1]  # keep at least one
 
-    def _refine_near_misses(self, provider: BaseLLMProvider, client: Optional[Any]) -> int:
+    def _refine_near_misses(self, provider: BaseLLMProvider, client: Optional[Any], *, model_label: str = "") -> int:
         """Find rejected or submission-blocked experiments and generate improved variants."""
         if client is None:
             return 0
@@ -2150,6 +2219,7 @@ class AgentRuntime:
                     "alpha_name": f"refined_{variant.get('name', 'v')}",
                     "alpha_expression": record.expression,
                     "implementation_notes": f"refined from experiment {experiment['id']}",
+                    "llm_model": model_label,
                     "status": "promising" if meets else "rejected",
                     "sharpe": record.simulate_result.sharpe,
                     "fitness": record.simulate_result.fitness,
