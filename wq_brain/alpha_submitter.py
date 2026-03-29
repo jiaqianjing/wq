@@ -8,6 +8,7 @@ Alpha 提交器
 - 提交队列管理
 """
 
+import threading
 import time
 import json
 from typing import List, Dict, Optional, Callable
@@ -99,7 +100,8 @@ class AlphaSubmitter:
                            auto_submit: bool = True,
                            check_correlation: bool = True,
                            max_correlation: float = 0.7,
-                           settings: Optional[AlphaSettings] = None) -> List[SubmissionRecord]:
+                           settings: Optional[AlphaSettings] = None,
+                           stop_event: Optional["threading.Event"] = None) -> List[SubmissionRecord]:
         """
         模拟并提交 Alpha 列表
 
@@ -118,6 +120,9 @@ class AlphaSubmitter:
         settings = settings or AlphaSettings()
 
         for i, alpha in enumerate(alphas, 1):
+            if stop_event is not None and stop_event.is_set():
+                logger.info("simulate_and_submit interrupted by stop_event at alpha %d/%d", i, len(alphas))
+                break
             logger.info(f"处理 Alpha {i}/{len(alphas)}: {alpha.get('name', 'unknown')}")
 
             try:
@@ -136,7 +141,7 @@ class AlphaSubmitter:
                 )
 
                 # 模拟
-                result = self.client.simulate_alpha(config)
+                result = self.client.simulate_alpha(config, stop_event=stop_event)
                 alpha_label = result.alpha_id or alpha.get("name", "unknown")
 
                 record = SubmissionRecord(

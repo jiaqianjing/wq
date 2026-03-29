@@ -469,6 +469,21 @@ class RuntimeStore:
         self._refresh_cache()
         return inserted
 
+    def recover_stale_engineering_ideas(self) -> int:
+        conn = self._connect()
+        stale_cutoff = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=5)
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE ideas SET status = 'queued', updated_at = ? WHERE status = 'engineering' AND updated_at < ?",
+            (utc_now(), stale_cutoff.isoformat()),
+        )
+        recovered = cur.rowcount
+        conn.commit()
+        conn.close()
+        if recovered:
+            self._refresh_cache()
+        return recovered
+
     def claim_ideas(self, limit: int) -> List[Dict[str, Any]]:
         conn = self._connect()
         cur = conn.cursor()
@@ -1857,6 +1872,8 @@ class AgentRuntime:
         }
 
     def run_engineer_cycle(self) -> str:
+        # Recover all stale engineering ideas at cycle start
+        self.store.recover_stale_engineering_ideas()
         limit = int(self.config["app"].get("default_claim_limit", 3))
         claimed_ideas = self.store.claim_ideas(limit=limit)
 
@@ -1892,6 +1909,11 @@ class AgentRuntime:
         criteria = self._criteria()
         results = []
         for index, idea in enumerate(claimed_ideas, start=1):
+            if self.stop_event.is_set():
+                # Return unclaimed ideas to queue
+                for remaining in claimed_ideas[index - 1:]:
+                    self.store.update_idea(remaining["id"], status="queued")
+                break
             self.store.set_agent_status(
                 "engineer",
                 "running",
@@ -1937,6 +1959,7 @@ class AgentRuntime:
                 region=region,
                 universe=universe,
                 auto_submit=False,
+                stop_event=self.stop_event,
             )
             idea_status = "tested"
             for alpha_candidate, record in zip(alpha_candidates, records):
@@ -2207,6 +2230,7 @@ class AgentRuntime:
 
             records = submitter.simulate_and_submit(
                 alphas=variants, region=region, universe=universe, auto_submit=False,
+                stop_event=self.stop_event,
             )
             idea_status = "tested"
             for variant, record in zip(variants, records):

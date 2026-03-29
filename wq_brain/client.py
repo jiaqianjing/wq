@@ -5,6 +5,7 @@ WorldQuant Brain API 客户端
 
 import json
 import os
+import threading
 import time
 import requests
 from requests.auth import HTTPBasicAuth
@@ -376,7 +377,7 @@ class WorldQuantBrainClient:
 
         return response
 
-    def simulate_alpha(self, config: AlphaConfig) -> SimulateResult:
+    def simulate_alpha(self, config: AlphaConfig, stop_event: Optional[threading.Event] = None) -> SimulateResult:
         """
         模拟单个 Alpha
 
@@ -422,13 +423,13 @@ class WorldQuantBrainClient:
                 if progress_url:
                     logger.info(f"Alpha 模拟已创建，轮询进度...")
                     result = self._wait_for_simulation_progress(
-                        progress_url, max_wait=self.DEFAULT_SIMULATION_MAX_WAIT
+                        progress_url, max_wait=self.DEFAULT_SIMULATION_MAX_WAIT, stop_event=stop_event
                     )
-                    if result.status == "TIMEOUT":
+                    if result.status == "TIMEOUT" and (stop_event is None or not stop_event.is_set()):
                         logger.warning("模拟超时，准备重试轮询...")
                         time.sleep(5)
                         result = self._wait_for_simulation_progress(
-                            progress_url, max_wait=self.DEFAULT_SIMULATION_RETRY_WAIT
+                            progress_url, max_wait=self.DEFAULT_SIMULATION_RETRY_WAIT, stop_event=stop_event
                         )
                     return result
                 else:
@@ -481,21 +482,38 @@ class WorldQuantBrainClient:
                 error_message=str(e)
             )
 
-    def _wait_for_simulation_progress(self, progress_url: str, max_wait: int = 900) -> SimulateResult:
+    def _wait_for_simulation_progress(self, progress_url: str, max_wait: int = 900, stop_event: Optional[threading.Event] = None) -> SimulateResult:
         """
         等待模拟完成（通过进度 URL）
 
         Args:
             progress_url: 模拟进度 URL（从 Location header 获取）
             max_wait: 最大等待时间（秒）
+            stop_event: 可选的停止事件，收到信号后中断等待
 
         Returns:
             SimulateResult: 模拟结果
         """
+        def _interrupted():
+            return stop_event is not None and stop_event.is_set()
+
+        def _sleep(seconds: float):
+            if stop_event is not None:
+                stop_event.wait(seconds)
+            else:
+                time.sleep(seconds)
+
         start_time = time.time()
         poll_count = 0
 
         while time.time() - start_time < max_wait:
+            if _interrupted():
+                logger.info("模拟等待被中断 (stop_event set), poll=%d elapsed=%.1fs", poll_count, time.time() - start_time)
+                return SimulateResult(
+                    alpha_id="", status="TIMEOUT", sharpe=0, fitness=0, turnover=0,
+                    returns=0, drawdown=0, margin=0, is_submittable=False,
+                    error_message="interrupted by stop_event",
+                )
             try:
                 poll_count += 1
                 response = self._request(
@@ -518,7 +536,7 @@ class WorldQuantBrainClient:
                             elapsed,
                             wait_time,
                         )
-                        time.sleep(wait_time)
+                        _sleep(wait_time)
                         continue
                     
                     # 模拟完成，获取 alpha ID 和结果
@@ -556,7 +574,7 @@ class WorldQuantBrainClient:
                                 time.time() - start_time,
                                 status,
                             )
-                        time.sleep(5)
+                        _sleep(5)
                         continue
 
                     progress = data.get("progress")
@@ -568,7 +586,7 @@ class WorldQuantBrainClient:
                                 time.time() - start_time,
                                 float(progress),
                             )
-                        time.sleep(5)
+                        _sleep(5)
                         continue
 
                     ready = data.get("ready")
@@ -579,7 +597,7 @@ class WorldQuantBrainClient:
                                 poll_count,
                                 time.time() - start_time,
                             )
-                        time.sleep(5)
+                        _sleep(5)
                         continue
 
                     return SimulateResult(
@@ -595,7 +613,7 @@ class WorldQuantBrainClient:
                         error_message="未获取到 Alpha ID"
                     )
 
-                time.sleep(5)
+                _sleep(5)
 
             except Exception as e:
                 logger.warning(
@@ -604,7 +622,7 @@ class WorldQuantBrainClient:
                     poll_count,
                     time.time() - start_time,
                 )
-                time.sleep(5)
+                _sleep(5)
 
         return SimulateResult(
             alpha_id="",
