@@ -164,10 +164,14 @@ BaseLLMProvider          # 抽象基类，generate(system, user) → str
 **Phase 1 — 评审与提交**：
 - 从 experiments 中 claim 状态为 promising 的记录
 - 用 `SubmissionCriteria.check()` 判断是否达标
-- 达标的调用 `AlphaSubmitter` 提交到 WQ
+- 达标后先跑 WorldQuant submission check，再执行 submit
+- 如果 submission check 失败或 pending，实验标记为 `blocked`，并记录平台返回原因（例如 `FAIL=PROD_CORRELATION`）
+- 只有真正提交成功的实验才标记为 `submitted`
 
 **Phase 2 — 近似修复**：
-- 查找 sharpe >= criteria * 0.6 但因 turnover/fitness 被拒的实验
+- 查找两类可修复对象：
+  - sharpe >= criteria * 0.6 但因 turnover/fitness 被拒的 `rejected` 实验
+  - 因 submission check 失败而被标记为 `blocked` 的实验（例如 `FAIL=PROD_CORRELATION`）
 - 用 LLM 生成修复变体（加 neutralize、拉长窗口、加 trade_when 等）
 - 重新模拟修复后的表达式
 

@@ -243,9 +243,11 @@ function rStats(s){
   $("#statsR").innerHTML=[
     {l:"Sources",v:c.sources||0,s:`collected`,h:0},
     {l:"Ideas",v:c.ideas||0,s:`${is.queued||0} queued`,h:0},
-    {l:"Experiments",v:c.experiments||0,s:`${es.promising||0} promising / ${es.rejected||0} rej`,h:0},
+    {l:"Experiments",v:c.experiments||0,s:`${es.promising||0} promising / ${es.blocked||0} blocked`,h:0},
     {l:"Best Sharpe",v:b.sharpe??"-",s:esc((b.idea_title||"").slice(0,40)),h:1},
-    {l:"Submitted",v:(es.submitted||0)+(es.accepted||0),s:"to WorldQuant",h:0},
+    {l:"Accepted",v:es.accepted||0,s:"locally reviewed",h:0},
+    {l:"Submitted",v:es.submitted||0,s:"to WorldQuant",h:0},
+    {l:"Blocked",v:es.blocked||0,s:"by WQ checks",h:0},
   ].map(i=>`<div class="st${i.h?" hi":""}"><div class="l">${i.l}</div><div class="v">${i.v}</div><div class="s">${i.s}</div></div>`).join("");
 }
 function rTrend(ex){
@@ -265,7 +267,7 @@ function rTrend(ex){
 }
 function rMix(s){
   const is=s.idea_status||{},es=s.experiment_status||{};
-  const bars=[{l:"Queued",v:is.queued||0,c:"var(--accent)"},{l:"Eng",v:is.engineering||0,c:"var(--accent2)"},{l:"Promising",v:es.promising||0,c:"var(--good)"},{l:"Rejected",v:es.rejected||0,c:"var(--bad)"},{l:"Submitted",v:(es.submitted||0)+(es.accepted||0),c:"var(--purple)"}];
+  const bars=[{l:"Queued",v:is.queued||0,c:"var(--accent)"},{l:"Eng",v:is.engineering||0,c:"var(--accent2)"},{l:"Promising",v:es.promising||0,c:"var(--good)"},{l:"Accepted",v:es.accepted||0,c:"var(--good)"},{l:"Submitted",v:es.submitted||0,c:"var(--purple)"},{l:"Blocked",v:es.blocked||0,c:"var(--bad)"},{l:"Rejected",v:es.rejected||0,c:"var(--bad)"}];
   const mx=Math.max(...bars.map(b=>b.v),1),W=560,H=180,px=24,py=24,pw=W-px*2,gap=12,bw=(pw-gap*(bars.length-1))/bars.length;
   $("#mixC").innerHTML=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
     ${bars.map((b,i)=>{const h=(b.v/mx)*(H-py*2),x=px+i*(bw+gap),y=H-py-h;return`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="4" fill="${b.c}" opacity=".8"/><text x="${(x+bw/2).toFixed(1)}" y="${(y-5).toFixed(1)}" text-anchor="middle" fill="var(--text2)" font-size="10" font-weight="600">${b.v}</text><text x="${(x+bw/2).toFixed(1)}" y="${(H-7).toFixed(1)}" text-anchor="middle" fill="var(--text3)" font-size="9">${b.l}</text>`}).join("")}</svg>`;

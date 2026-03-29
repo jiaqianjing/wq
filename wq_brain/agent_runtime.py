@@ -15,12 +15,10 @@ import sys
 import threading
 import time
 import copy
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import quote
-from xml.etree import ElementTree
 
 import requests
 
@@ -31,8 +29,13 @@ except ImportError:  # pragma: no cover
 
 from .alpha_generator import AlphaGenerator
 from .alpha_submitter import AlphaSubmitter, SubmissionCriteria
-from .client import Region, Universe, WorldQuantBrainClient
+from .client import Region, SubmissionResult, Universe, WorldQuantBrainClient
 from .learning import AlphaAnalyzer, AlphaDatabase, SmartGenerator
+from .refinement_policy import (
+    refinement_problem,
+    refinement_strategy_lines,
+)
+from .source_collector import SourceCollector, SourceItem
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +114,18 @@ def read_log_tail(log_path: Path, lines: int = 40) -> str:
     return "\n".join(tail) if tail else "No log lines"
 
 
+def compact_submission_reason(reason: Any) -> str:
+    text = " ".join(str(reason or "submit failed").split())
+    return text[:200]
+
+
+def is_worldquant_submission_block(result: SubmissionResult) -> bool:
+    check_result = result.check_result
+    if check_result is None:
+        return False
+    return (not check_result.ok) or bool(check_result.failed_checks) or bool(check_result.pending_checks)
+
+
 DEFAULT_CONFIG_TEMPLATE = """# wqa: WorldQuant Agent Lab
 # 运行前建议：
 # 1. 填入 WorldQuant Brain 账号
@@ -185,18 +200,13 @@ sources:
     - name: arxiv-qfin
       kind: atom
       url: https://export.arxiv.org/api/query?search_query=cat:q-fin.ST&sortBy=submittedDate&sortOrder=descending&max_results=8
+      timeout_seconds: 15
+      user_agent: wqa-source-collector/1.0
+      honor_retry_after: true
+      rate_limit_cooldown_seconds: 1800
   reports: []
   market: []
 """
-
-
-@dataclass
-class SourceItem:
-    source_kind: str
-    title: str
-    summary: str
-    url: str
-    published_at: str
 
 
 class RuntimeStore:
@@ -1098,70 +1108,6 @@ class TelegramNotifier:
         response.raise_for_status()
 
 
-class SourceCollector:
-    def __init__(self, config: Dict[str, Any]):
-        self.config = config
-
-    def collect(self) -> List[SourceItem]:
-        items: List[SourceItem] = []
-        for kind in ("papers", "reports", "market"):
-            for source in self.config.get("sources", {}).get(kind, []):
-                try:
-                    items.extend(self._fetch_source(kind, source))
-                except Exception as exc:  # pragma: no cover
-                    logger.warning("failed to fetch source %s: %s", source, exc)
-        return items
-
-    def _fetch_source(self, kind: str, source: Dict[str, Any]) -> List[SourceItem]:
-        url = source.get("url", "")
-        if not url:
-            return []
-        timeout_seconds = int(source.get("timeout_seconds", 15))
-        response = requests.get(url, timeout=timeout_seconds)
-        response.raise_for_status()
-        root = ElementTree.fromstring(response.text)
-        items: List[SourceItem] = []
-
-        atom_entries = root.findall("{http://www.w3.org/2005/Atom}entry")
-        if atom_entries:
-            for entry in atom_entries:
-                title = entry.findtext("{http://www.w3.org/2005/Atom}title", default="").strip()
-                summary = entry.findtext("{http://www.w3.org/2005/Atom}summary", default="").strip()
-                published = entry.findtext("{http://www.w3.org/2005/Atom}published", default=utc_now())
-                link_node = entry.find("{http://www.w3.org/2005/Atom}id")
-                url_value = link_node.text.strip() if link_node is not None and link_node.text else url
-                if title:
-                    items.append(
-                        SourceItem(
-                            source_kind=kind,
-                            title=title,
-                            summary=summary,
-                            url=url_value,
-                            published_at=published,
-                        )
-                    )
-            return items
-
-        for entry in root.findall(".//item"):
-            title = (entry.findtext("title") or "").strip()
-            summary = (entry.findtext("description") or "").strip()
-            published = (entry.findtext("pubDate") or utc_now()).strip()
-            link = (entry.findtext("link") or url).strip()
-            if title:
-                items.append(
-                    SourceItem(
-                        source_kind=kind,
-                        title=title,
-                        summary=summary,
-                        url=link,
-                        published_at=published,
-                    )
-                )
-        return items
-
-
-
-
 class AgentRuntime:
     def __init__(self, config_path: Path):
         self.config_path = config_path
@@ -2050,7 +1996,7 @@ class AgentRuntime:
         return result if result else candidates[:1]  # keep at least one
 
     def _refine_near_misses(self, provider: BaseLLMProvider, client: Optional[Any]) -> int:
-        """Find rejected experiments close to passing and generate improved variants."""
+        """Find rejected or submission-blocked experiments and generate improved variants."""
         if client is None:
             return 0
         criteria = self._criteria()
@@ -2060,16 +2006,27 @@ class AgentRuntime:
             SELECT e.*, i.title AS idea_title
             FROM experiments e
             JOIN ideas i ON i.id = e.idea_id
-            WHERE e.status = 'rejected'
-              AND e.sharpe >= ?
-              AND (e.turnover > ? OR e.fitness < ?)
+            WHERE (
+                (
+                    e.status = 'rejected'
+                    AND e.sharpe >= ?
+                    AND (e.turnover > ? OR e.fitness < ?)
+                )
+                OR (
+                    e.status = 'blocked'
+                    AND (
+                        e.submission_result LIKE 'blocked:FAIL=%'
+                        OR e.submission_result LIKE 'blocked:PENDING=%'
+                    )
+                )
+              )
               AND e.id NOT IN (
                   SELECT CAST(json_extract(payload_json, '$.parent_experiment_id') AS INTEGER)
                   FROM events
                   WHERE kind = 'engineer_refinement'
                     AND json_extract(payload_json, '$.parent_experiment_id') IS NOT NULL
               )
-            ORDER BY e.sharpe DESC
+            ORDER BY CASE WHEN e.status = 'blocked' THEN 0 ELSE 1 END ASC, e.sharpe DESC
             LIMIT 2
             """,
             (criteria.min_sharpe * 0.6, criteria.max_turnover, criteria.min_fitness),
@@ -2099,6 +2056,7 @@ class AgentRuntime:
             records = submitter.simulate_and_submit(
                 alphas=variants, region=region, universe=universe, auto_submit=False,
             )
+            idea_status = "tested"
             for variant, record in zip(variants, records):
                 sim_status = getattr(record.simulate_result, "status", "")
                 if sim_status in ("TIMEOUT", "ERROR", "FAILED") and record.simulate_result.sharpe == 0:
@@ -2118,6 +2076,14 @@ class AgentRuntime:
                     "wq_alpha_id": record.alpha_id,
                 })
                 refined_count += 1
+                if meets:
+                    idea_status = "reviewing"
+
+            self.store.update_idea(
+                experiment["idea_id"],
+                status=idea_status,
+                agent_notes=f"refined experiment {experiment['id']} into {len(records)} variants",
+            )
 
             self.store.add_event(
                 level="info", kind="engineer_refinement",
@@ -2126,6 +2092,8 @@ class AgentRuntime:
                     "parent_experiment_id": experiment["id"],
                     "parent_expression": experiment.get("alpha_expression"),
                     "parent_sharpe": experiment.get("sharpe"),
+                    "parent_status": experiment.get("status"),
+                    "parent_submission_result": experiment.get("submission_result"),
                     "variants": len(records),
                 },
             )
@@ -2138,6 +2106,8 @@ class AgentRuntime:
         criteria: SubmissionCriteria,
     ) -> List[Dict[str, Any]]:
         """Ask LLM to fix a near-miss alpha expression."""
+        problem = refinement_problem(experiment, criteria)
+        strategy_lines = refinement_strategy_lines(experiment, criteria)
         system_prompt = (
             "You are a quant engineer for WorldQuant BRAIN. "
             "Given a near-miss alpha expression, generate 2 improved variants.\n"
@@ -2146,16 +2116,16 @@ class AgentRuntime:
             f"  Sharpe >= {criteria.min_sharpe}, Fitness >= {criteria.min_fitness}, "
             f"Turnover <= {criteria.max_turnover}\n\n"
             "FIX STRATEGIES:\n"
-            "- If turnover too high: wrap with group_neutralize(sector, ...), use longer ts windows, add ts_mean smoothing.\n"
-            "- If fitness too low: combine with a second uncorrelated signal, add rank() wrapper.\n"
-            "- Keep the core signal idea intact, only adjust structure."
+            + "\n".join(strategy_lines)
         )
         user_prompt = (
             f"Near-miss alpha to improve:\n"
             f"  Expression: {experiment.get('alpha_expression')}\n"
             f"  Sharpe: {experiment.get('sharpe')}, Fitness: {experiment.get('fitness')}, "
             f"Turnover: {experiment.get('turnover')}, Drawdown: {experiment.get('drawdown')}\n"
-            f"  Problem: {'turnover too high' if (experiment.get('turnover') or 0) > criteria.max_turnover else 'fitness too low'}\n"
+            f"  Current Status: {experiment.get('status')}\n"
+            f"  Submission Result: {experiment.get('submission_result') or 'n/a'}\n"
+            f"  Problem: {problem}\n"
             f"Generate 2 fixed variants."
         )
         try:
@@ -2173,6 +2143,7 @@ class AgentRuntime:
 
         accepted = 0
         submitted = 0
+        blocked = 0
         for index, experiment in enumerate(experiments, start=1):
             self.store.set_agent_status(
                 "reviewer",
@@ -2180,8 +2151,16 @@ class AgentRuntime:
                 f"reviewing experiment {index}/{len(experiments)}: {experiment.get('alpha_name') or experiment['idea_title'][:48]}",
             )
             final_status = "accepted"
-            summary = (
-                f"*Accepted alpha*\n"
+            summary_prefix = "*Accepted alpha*"
+            status_line = "Status: accepted without submit"
+            idea_status = "accepted"
+            idea_notes = "reviewer accepted candidate"
+            payload: Dict[str, Any] = {
+                "experiment_id": experiment["id"],
+                "idea_id": experiment["idea_id"],
+                "alpha_name": experiment.get("alpha_name"),
+            }
+            summary_body = (
                 f"Idea: {experiment['idea_title']}\n"
                 f"Sharpe: {experiment.get('sharpe')}\n"
                 f"Fitness: {experiment.get('fitness')}\n"
@@ -2197,42 +2176,68 @@ class AgentRuntime:
 
             auto_submit = bool(self.config.get("integrations", {}).get("worldquant", {}).get("auto_submit", True))
             if client and auto_submit and experiment.get("wq_alpha_id"):
-                success = client.submit_alpha(experiment["wq_alpha_id"])
-                self.store.update_experiment(
-                    experiment["id"],
-                    status="submitted" if success else "accepted",
-                    submitted=1 if success else 0,
-                    submission_result="submitted_to_worldquant" if success else "accepted_but_submit_failed",
-                )
-                if success:
+                submit_result = client.submit_alpha_with_checks(experiment["wq_alpha_id"])
+                submit_reason = compact_submission_reason(submit_result.reason)
+                payload["submission_reason"] = submit_reason
+                if submit_result.submitted:
+                    self.store.update_experiment(
+                        experiment["id"],
+                        status="submitted",
+                        submitted=1,
+                        submission_result="submitted_to_worldquant",
+                    )
                     submitted += 1
                     final_status = "submitted"
-                    summary += "\nStatus: submitted to WorldQuant"
+                    summary_prefix = "*Submitted alpha*"
+                    status_line = "Status: submitted to WorldQuant"
+                    idea_notes = "reviewer accepted and submitted candidate"
                 else:
-                    summary += "\nStatus: accepted, submit failed"
+                    if is_worldquant_submission_block(submit_result):
+                        self.store.update_experiment(
+                            experiment["id"],
+                            status="blocked",
+                            submitted=0,
+                            submission_result=f"blocked:{submit_reason}",
+                        )
+                        blocked += 1
+                        final_status = "blocked"
+                        summary_prefix = "*Blocked alpha*"
+                        status_line = f"Status: blocked by WorldQuant submit checks ({submit_reason})"
+                        idea_status = "blocked"
+                        idea_notes = f"submission blocked: {submit_reason}"
+                    else:
+                        self.store.update_experiment(
+                            experiment["id"],
+                            status="accepted",
+                            submitted=0,
+                            submission_result=f"submit_failed:{submit_reason}",
+                        )
+                        accepted += 1
+                        status_line = f"Status: accepted, submit failed ({submit_reason})"
+                        idea_notes = f"reviewer accepted candidate; auto-submit failed: {submit_reason}"
             else:
                 self.store.update_experiment(
                     experiment["id"],
                     status="accepted",
                     submission_result="accepted_without_submit",
                 )
-                summary += "\nStatus: accepted without submit"
-            self.store.update_idea(experiment["idea_id"], status="accepted", agent_notes="reviewer accepted candidate")
+                accepted += 1
+            self.store.update_idea(experiment["idea_id"], status=idea_status, agent_notes=idea_notes)
+            summary = f"{summary_prefix}\n{summary_body}\n{status_line}"
             self.notifier.send(summary)
             self.store.add_event(
                 level="info",
                 kind="reviewer",
                 message=f"reviewed experiment {experiment['id']} with status {final_status}",
-                payload={"experiment_id": experiment["id"], "idea_id": experiment["idea_id"], "alpha_name": experiment.get("alpha_name")},
+                payload=payload,
             )
-            accepted += 1
 
         self.store.add_event(
             level="info",
             kind="reviewer",
-            message=f"reviewer accepted {accepted}, submitted {submitted}",
+            message=f"reviewer accepted {accepted}, submitted {submitted}, blocked {blocked}",
         )
-        return f"accepted={accepted}, submitted={submitted}"
+        return f"accepted={accepted}, submitted={submitted}, blocked={blocked}"
 
     def run_analyst_cycle(self) -> str:
         analyst_config = self.config.get("agents", {}).get("analyst", {})

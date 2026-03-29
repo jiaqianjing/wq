@@ -72,6 +72,10 @@ sources:
     - name: arxiv-qfin
       kind: atom                   # atom | rss
       url: https://export.arxiv.org/api/query?search_query=cat:q-fin.ST&...
+      timeout_seconds: 15          # 单次请求超时
+      user_agent: wqa-source-collector/1.0  # 自定义 UA，建议对外部源显式声明
+      honor_retry_after: true      # 429 时优先遵守服务端 Retry-After
+      rate_limit_cooldown_seconds: 1800  # 429 且无 Retry-After 时的默认冷却
   reports: []
   market: []
 ```
@@ -129,6 +133,21 @@ sources:
     - name: my-source
       kind: atom          # atom 或 rss
       url: https://...
+      timeout_seconds: 15
+      user_agent: wqa-source-collector/1.0
+      honor_retry_after: true
+      rate_limit_cooldown_seconds: 1800
 ```
 
 `SourceCollector` 会在每个 researcher 周期自动抓取所有配置的源。
+
+### Source 限流与冷却
+
+- 所有 `papers` / `reports` / `market` 源共享同一套 429 处理逻辑。
+- 如果某个源返回 `429 Too Many Requests`：
+  - 优先读取响应头里的 `Retry-After`
+  - 如果没有 `Retry-After`，回退到 `rate_limit_cooldown_seconds`
+  - 冷却期间后续 researcher 周期会直接跳过该源，不会每轮重复请求
+- `honor_retry_after: false` 时，系统忽略服务端的 `Retry-After`，固定使用 `rate_limit_cooldown_seconds`
+- `user_agent` 允许你为外部源声明明确的请求标识；未配置时默认使用 `wqa-source-collector/1.0`
+- 冷却状态保存在运行进程内存中；如果 runtime 重启，冷却状态会重新开始计算
