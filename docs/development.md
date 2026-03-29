@@ -22,6 +22,8 @@ uv run python -m pytest tests/test_wqa_runtime.py -q
 
 测试覆盖：RuntimeStore CRUD、idea 去重、experiment 状态流转、config 加载。测试使用内存 SQLite，不依赖外部服务。
 
+`RuntimeStore` 初始化时会清理不在当前状态集合内的旧 `idea` 数据，并同时删除其关联 `experiment`，避免多套状态长期并存。
+
 ## 添加新 Agent
 
 1. 在 `AgentRuntime` 中添加 `run_<name>_cycle()` 方法

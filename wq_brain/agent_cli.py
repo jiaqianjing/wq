@@ -8,11 +8,13 @@ import argparse
 import json
 import logging
 import sys
+import time
 from pathlib import Path
 
 from .agent_runtime import (
     AgentRuntime,
     init_runtime_config,
+    is_process_alive,
     runtime_status,
     start_runtime,
     stop_runtime,
@@ -84,7 +86,20 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.command == "restart":
         ensure_config_exists(config_path)
-        print(json.dumps(stop_runtime(config_path), ensure_ascii=False, indent=2))
+        stop_result = stop_runtime(config_path)
+        print(json.dumps(stop_result, ensure_ascii=False, indent=2))
+        if stop_result.get("status") == "stop_requested":
+            # Process didn't exit in time; wait a bit more before giving up.
+            pid = stop_result.get("pid", 0)
+            for _ in range(20):
+                if not is_process_alive(pid):
+                    break
+                time.sleep(0.5)
+            else:
+                print(json.dumps({"status": "error", "message": f"process {pid} still alive after extended wait"}, ensure_ascii=False, indent=2))
+                return
+        # Brief pause to let the OS release the dashboard port.
+        time.sleep(1)
         print(json.dumps(start_runtime(config_path), ensure_ascii=False, indent=2))
         return
 

@@ -62,9 +62,9 @@ class SubmissionRecord:
 class AlphaSettings:
     """Alpha 配置设置（用于策略解耦）"""
     delay: Delay = Delay.DELAY_1
-    decay: int = 0
+    decay: int = 6
     neutralization: str = "SUBINDUSTRY"
-    truncation: float = 0.08
+    truncation: float = 0.01
     pasteurization: str = "ON"
     unit_neutral: bool = False
     visualization: bool = False

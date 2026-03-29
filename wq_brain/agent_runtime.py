@@ -75,6 +75,15 @@ SENSITIVE_KEY_FRAGMENTS = (
     "chat_id",
 )
 
+VALID_IDEA_STATUSES = (
+    "queued",
+    "engineering",
+    "tested",
+    "reviewing",
+    "accepted",
+    "blocked",
+)
+
 
 def _mask_sensitive_value(value: Any) -> Any:
     if value in (None, ""):
@@ -328,8 +337,32 @@ class RuntimeStore:
         if "llm_model" not in existing_exp_cols:
             conn.execute("ALTER TABLE experiments ADD COLUMN llm_model TEXT")
             conn.commit()
+        purged_ideas = self._purge_legacy_ideas(conn)
+        if purged_ideas:
+            logger.info("purged %d ideas with unsupported legacy statuses", purged_ideas)
+            conn.commit()
         conn.close()
         self._refresh_cache()
+
+    def _purge_legacy_ideas(self, conn: sqlite3.Connection) -> int:
+        placeholders = ", ".join("?" for _ in VALID_IDEA_STATUSES)
+        rows = conn.execute(
+            f"SELECT id FROM ideas WHERE status NOT IN ({placeholders})",
+            VALID_IDEA_STATUSES,
+        ).fetchall()
+        if not rows:
+            return 0
+        idea_ids = tuple(int(row[0]) for row in rows)
+        id_placeholders = ", ".join("?" for _ in idea_ids)
+        conn.execute(
+            f"DELETE FROM experiments WHERE idea_id IN ({id_placeholders})",
+            idea_ids,
+        )
+        conn.execute(
+            f"DELETE FROM ideas WHERE id IN ({id_placeholders})",
+            idea_ids,
+        )
+        return len(idea_ids)
 
     def add_source_items(self, items: Iterable[SourceItem]) -> int:
         conn = self._connect()
@@ -383,11 +416,11 @@ class RuntimeStore:
         inserted = 0
         now = utc_now()
         for idea in ideas:
-            # Deduplicate: skip only if an identical idea is still queued or claimed
+            # Deduplicate only ideas that are still waiting in the queue.
             existing = cur.execute(
                 """
                 SELECT id FROM ideas
-                WHERE title = ? AND summary = ? AND status IN ('queued', 'claimed')
+                WHERE title = ? AND summary = ? AND status = 'queued'
                 ORDER BY created_at DESC
                 LIMIT 1
                 """,
@@ -1607,12 +1640,15 @@ class AgentRuntime:
         kb_proven = self._brain_knowledge_prompt("proven_alphas")
         kb_tips = self._brain_knowledge_prompt("platform_tips")
         kb_account = self._account_profile_prompt()
+        kb_corr = self._brain_knowledge_prompt("production_correlation")
         kb_section = ""
         parts_kb = []
         if kb_proven:
             parts_kb.append(f"PROVEN ALPHA PATTERNS (reference these):\n{kb_proven}")
         if kb_tips:
             parts_kb.append(f"PLATFORM TIPS:\n{kb_tips}")
+        if kb_corr:
+            parts_kb.append(f"PRODUCTION CORRELATION STRATEGIES (critical):\n{kb_corr}")
         if kb_account:
             parts_kb.append(kb_account)
         if parts_kb:
@@ -1623,20 +1659,31 @@ class AgentRuntime:
             "Your job: generate ideas that an engineer can turn into BRAIN FASTEXPR alpha expressions.\n\n"
             "BRAIN acceptance criteria:\n"
             f"  Sharpe >= {criteria.min_sharpe}, Fitness >= {criteria.min_fitness}, "
-            f"Turnover <= {criteria.max_turnover}\n\n"
+            f"Turnover <= {criteria.max_turnover}\n"
+            "  Fitness = Sharpe × sqrt(days_traded / total_days). To maximize fitness, the alpha must trade on MOST days.\n\n"
             "Available operators: rank, ts_corr, ts_delta, ts_mean, ts_std_dev, ts_sum, ts_max, ts_min, "
             "ts_returns, ts_delay, ts_rank, ts_argmax, ts_argmin, ts_product, "
             "group_rank, group_neutralize, trade_when, ts_regression, vector_neut, "
-            "ts_decay_exp_window, signed_power, ts_quantile, abs, log, sign, power.\n"
+            "ts_decay_exp_window, signed_power, ts_quantile, humpdecay, abs, log, sign, power.\n"
             "Available fields: open, high, low, close, volume, vwap, adv20, returns, cap, sharesout, "
-            "equity, enterprise_value, ebitda, operating_income, retained_earnings.\n\n"
+            "equity, enterprise_value, ebitda, operating_income, retained_earnings.\n"
+            "Model data fields: mdf_oey, mdf_gry, mdf_nps, mdf_pbk.\n"
+            "News/sentiment: nws12_afterhsz_sl, snt_buzz_ret, scl12_alltype_buzzvec.\n"
+            "Options: implied_volatility_call_720, pcr_vol_10.\n"
+            "Relative: rel_ret_comp.\n\n"
             "Rules:\n"
             "- Each idea MUST include a concrete expression sketch using the operators above.\n"
             "- Prefer 3+ nested operators; single-operator expressions always fail.\n"
-            "- Always wrap with group_neutralize(sector, ...) or rank(...) to control turnover.\n"
-            "- Use trade_when with volatility filter to reduce turnover.\n"
+            "- Always wrap with group_neutralize(subindustry, ...) for best performance.\n"
+            "- Use trade_when with MODERATE volatility threshold (0.45-0.55, NOT 0.65) to keep enough trading days for high fitness.\n"
             "- Combine price-volume with fundamental data for strongest signals.\n"
             "- Explain the economic hypothesis: WHY should this signal predict returns?\n\n"
+            "DIVERSITY REQUIREMENTS (critical):\n"
+            "- Each idea MUST use a DIFFERENT primary signal mechanism (momentum, mean-reversion, fundamental, sentiment, cross-asset).\n"
+            "- NEVER generate two ideas sharing the same core operator structure.\n"
+            "- Explore underused operators: humpdecay, ts_quantile, signed_power, vector_neut, ts_regression(y,x,w,lag,rettype=3).\n"
+            "- Try model data (mdf_oey, mdf_gry), news/sentiment, options, and relative returns data — these are underexplored.\n"
+            "- The platform REJECTS alphas correlated with existing production alphas. Use diverse data fields and structural patterns.\n\n"
             "Return compact JSON only: a list with title, summary, expression_sketch, rationale, "
             "priority, source_kind, source_title, source_url."
             f"{kb_section}"
@@ -1676,20 +1723,33 @@ class AgentRuntime:
             key=lambda e: e.get("sharpe", 0), reverse=True,
         )
         best_expr = best[0].get("alpha_expression", "") if best else ""
+        _FALLBACK_SKETCHES = [
+            "group_neutralize(trade_when(ts_rank(ts_std_dev(returns, 22), 252) > 0.50, "
+            "rank(ts_decay_exp_window(rank(-ts_corr(open, volume, 20)) * ts_rank(mdf_oey, 252), 30)) "
+            "+ rank(ts_mean(-returns, 5)), -1), subindustry)",
+            "group_neutralize(trade_when(ts_rank(ts_std_dev(returns, 22), 252) > 0.45, "
+            "signed_power(ts_regression(returns, ts_delay(returns, 1), 120, 0, 3), 0.5) "
+            "* ts_rank(operating_income / (enterprise_value + 0.001), 180), -1), subindustry)",
+            "group_neutralize(vector_neut(ts_decay_exp_window(rank(-ts_corr(vwap, volume, 15)) "
+            "* ts_rank(mdf_gry, 120), 40), returns), subindustry)",
+            "group_neutralize(trade_when(ts_rank(ts_std_dev(returns, 22), 252) > 0.50, "
+            "rank(ts_quantile(returns, 60)) * rank(snt_buzz_ret), -1), subindustry)",
+        ]
         hint = (
             f"Build on the strongest recent signal: {best_expr}. "
-            "Add group_neutralize(sector, ...) to control turnover and combine with a second factor."
+            "Use group_neutralize(subindustry, ...) and combine with diverse data fields."
             if best_expr else
-            "Use group_neutralize(sector, rank(...)) patterns with 3+ nested operators."
+            "Use group_neutralize(subindustry, trade_when(...)) patterns with 3+ nested operators."
         )
         for index, source in enumerate(recent_sources[:batch_size]):
+            sketch = _FALLBACK_SKETCHES[index % len(_FALLBACK_SKETCHES)]
             ideas.append(
                 self._normalize_idea(
                     {
                         "title": f"{source['source_kind']} signal idea {index + 1}: {source['title'][:60]}",
                         "summary": (
                             f"Derive a cross-sectional alpha from '{source['title'][:50]}'. "
-                            f"Expression sketch: group_neutralize(sector, rank(ts_corr(close, volume, 20)))."
+                            f"Expression sketch: {sketch}"
                         ),
                         "rationale": hint,
                         "priority": 10 + index,
@@ -1704,7 +1764,12 @@ class AgentRuntime:
                 self._normalize_idea(
                     {
                         "title": "Refinement of best historical alpha",
-                        "summary": f"Take the best recent expression and create neutralized variants. Base: {best_expr or 'rank(ts_corr(close, volume, 20))'}",
+                        "summary": (
+                            f"Take the best recent expression and create structurally different variants. "
+                            f"Base: {best_expr or _FALLBACK_SKETCHES[0]}. "
+                            "Try swapping data fields (mdf_oey, mdf_gry, snt_buzz_ret) and operators "
+                            "(ts_regression rettype=3, vector_neut, signed_power)."
+                        ),
                         "rationale": hint,
                         "priority": 5,
                         "source_kind": "history",
@@ -1911,6 +1976,7 @@ class AgentRuntime:
         kb_operators = self._brain_knowledge_prompt("operators_by_category") or self._brain_knowledge_prompt("advanced_operators")
         kb_fields = self._brain_knowledge_prompt("top_data_fields")
         kb_account = self._account_profile_prompt()
+        kb_corr = self._brain_knowledge_prompt("production_correlation")
         kb_section = ""
         if kb_proven:
             kb_section += f"\n\nPROVEN PATTERNS (use as inspiration):\n{kb_proven}"
@@ -1918,6 +1984,8 @@ class AgentRuntime:
             kb_section += f"\n\nALL AVAILABLE OPERATORS:\n{kb_operators}"
         if kb_fields:
             kb_section += f"\n\nTOP DATA FIELDS BY POPULARITY:\n{kb_fields}"
+        if kb_corr:
+            kb_section += f"\n\nPRODUCTION CORRELATION STRATEGIES (critical for submission):\n{kb_corr}"
         if kb_account:
             kb_section += f"\n\n{kb_account}"
 
@@ -1933,16 +2001,31 @@ class AgentRuntime:
             "ts_decay_exp_window, signed_power, ts_quantile, humpdecay, "
             "abs, log, sign, max, min, power.\n"
             "Available fields: open, high, low, close, volume, vwap, adv20, returns, cap, sharesout, "
-            "equity, enterprise_value, ebitda, operating_income, retained_earnings.\n\n"
+            "equity, enterprise_value, ebitda, operating_income, retained_earnings.\n"
+            "Model data: mdf_oey, mdf_gry, mdf_nps, mdf_pbk.\n"
+            "News/sentiment: nws12_afterhsz_sl, snt_buzz_ret.\n"
+            "Options: implied_volatility_call_720, pcr_vol_10.\n"
+            "Relative: rel_ret_comp.\n\n"
             "CRITICAL RULES:\n"
-            "- ALWAYS wrap final expression with group_neutralize(sector, ...) to control turnover.\n"
-            "- Use trade_when(volatility_condition, alpha, -1) to reduce turnover dramatically.\n"
+            "- ALWAYS wrap final expression with group_neutralize(subindustry, ...) for best performance.\n"
+            "- Use trade_when(volatility_condition, alpha, -1) to reduce turnover, but keep threshold MODERATE (0.45-0.55).\n"
+            "  Higher thresholds (0.65) kill fitness because Fitness = Sharpe × sqrt(days_traded/total_days).\n"
             "- Use 3+ nested operators; simple expressions always get rejected.\n"
             "- Combine price-volume AND fundamental fields for stronger signals.\n"
             "- Use ts_rank or rank for cross-sectional normalization.\n"
-            "- Use subindustry neutralization for best performance.\n"
             "- Do NOT repeat any expression from the failed list below.\n"
-            "- Each expression must be syntactically valid FASTEXPR."
+            "- Each expression must be syntactically valid FASTEXPR.\n\n"
+            "PRODUCTION CORRELATION AVOIDANCE (critical — best alphas were blocked by PROD_CORRELATION):\n"
+            "- The platform rejects alphas correlated with existing production alphas.\n"
+            "- Do NOT keep generating variants of: ts_decay_exp_window(rank(-ts_corr(price, volume, 20)) * ts_rank(fundamental/fundamental, N), M)\n"
+            "- Use STRUCTURALLY DIFFERENT approaches across candidates:\n"
+            "  * ts_regression(returns, x, window, 0, 3) for prediction-based signals\n"
+            "  * vector_neut(alpha, momentum_risk_factor) for risk-neutralized signals\n"
+            "  * humpdecay for turnover-controlled signals\n"
+            "  * signed_power(x, 0.5) instead of rank() for non-linear transforms\n"
+            "  * Model data (mdf_oey, mdf_gry) instead of equity/retained_earnings\n"
+            "  * News/sentiment/options data for truly orthogonal signals\n"
+            "- Each candidate MUST differ in primary data field AND primary operator structure."
             f"{best_text}"
             f"{kb_section}"
         )
@@ -2114,9 +2197,20 @@ class AgentRuntime:
             "Return JSON only: a list with name, expression, category, type.\n\n"
             "ACCEPTANCE CRITERIA:\n"
             f"  Sharpe >= {criteria.min_sharpe}, Fitness >= {criteria.min_fitness}, "
-            f"Turnover <= {criteria.max_turnover}\n\n"
+            f"Turnover <= {criteria.max_turnover}\n"
+            "  Fitness = Sharpe × sqrt(days_traded / total_days).\n\n"
             "FIX STRATEGIES:\n"
             + "\n".join(strategy_lines)
+            + "\n\nPROD_CORRELATION FIX (if submission_result contains PROD_CORRELATION):\n"
+            "- The original expression correlates too much with existing production alphas.\n"
+            "- You MUST change the structural approach, not just tweak parameters.\n"
+            "- Swap primary data fields (e.g., retained_earnings → mdf_oey, equity → mdf_gry).\n"
+            "- Swap primary operators (e.g., ts_corr → ts_regression rettype=3, rank → signed_power).\n"
+            "- Add vector_neut() to neutralize over a risk factor.\n"
+            "- Use a completely different signal construction while preserving the economic idea.\n\n"
+            "FITNESS FIX (if fitness is low):\n"
+            "- Lower the trade_when volatility threshold (use 0.45-0.50 instead of 0.55-0.65).\n"
+            "- Or remove trade_when entirely and control turnover via ts_decay_exp_window with longer window."
         )
         user_prompt = (
             f"Near-miss alpha to improve:\n"
@@ -2176,6 +2270,36 @@ class AgentRuntime:
             )
 
             if client and auto_submit and experiment.get("wq_alpha_id"):
+                # Pre-check correlation before wasting a submission check
+                try:
+                    corr_data = client.check_alpha_correlation(experiment["wq_alpha_id"])
+                    max_corr = corr_data.get("max_correlation", 0)
+                    if isinstance(max_corr, (int, float)) and max_corr >= 0.65:
+                        self.store.update_experiment(
+                            experiment["id"],
+                            status="blocked",
+                            submitted=0,
+                            submission_result=f"blocked:PROD_CORRELATION_PRECHECK={max_corr:.4f}",
+                        )
+                        blocked += 1
+                        final_status = "blocked"
+                        summary_prefix = "*Blocked alpha (correlation pre-check)*"
+                        status_line = f"Status: blocked by correlation pre-check (max_corr={max_corr:.4f}, limit=0.7)"
+                        idea_status = "blocked"
+                        idea_notes = f"correlation pre-check failed: max_corr={max_corr:.4f}"
+                        payload["max_correlation"] = max_corr
+                        self.store.update_idea(experiment["idea_id"], status=idea_status, agent_notes=idea_notes)
+                        summary = f"{summary_prefix}\n{summary_body}\n{status_line}"
+                        self.notifier.send(summary)
+                        self.store.add_event(
+                            level="info", kind="reviewer",
+                            message=f"experiment {experiment['id']} blocked by correlation pre-check (max_corr={max_corr:.4f})",
+                            payload=payload,
+                        )
+                        continue
+                except Exception as exc:
+                    logger.debug("correlation pre-check skipped: %s", exc)
+
                 submit_result = client.submit_alpha_with_checks(experiment["wq_alpha_id"])
                 submit_reason = compact_submission_reason(submit_result.reason)
                 payload["submission_reason"] = submit_reason
@@ -2501,7 +2625,11 @@ def stop_runtime(config_path: Path) -> Dict[str, Any]:
     runtime = AgentRuntime(config_path)
     if not runtime.pid_file.exists():
         return {"status": "not_running"}
-    pid = int(runtime.pid_file.read_text(encoding="utf-8").strip())
+    try:
+        pid = int(runtime.pid_file.read_text(encoding="utf-8").strip())
+    except (ValueError, OSError):
+        runtime.remove_runtime_metadata()
+        return {"status": "stale_pid", "pid": 0}
     if not is_process_alive(pid):
         runtime.remove_runtime_metadata()
         return {"status": "stale_pid", "pid": pid}

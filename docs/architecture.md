@@ -73,7 +73,7 @@ SQLite 持久层，管理所有运行时状态。
 | 表 | 用途 |
 |---|---|
 | `source_items` | 抓取的 RSS/论文原始条目 |
-| `ideas` | 研究 idea 队列，状态流转: queued → claimed → done/failed |
+| `ideas` | 研究 idea 队列，状态流转: queued → engineering → tested/reviewing → accepted/blocked |
 | `experiments` | Alpha 实验记录，含表达式、模拟结果、提交状态 |
 | `events` | 全局事件日志 |
 | `agent_status` | 各 agent 最新心跳和状态 |

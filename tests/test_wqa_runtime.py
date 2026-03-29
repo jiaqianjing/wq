@@ -1,4 +1,5 @@
 import logging
+import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -76,6 +77,108 @@ def test_runtime_store_deduplicates_ideas(tmp_path: Path) -> None:
     ]
     assert store.add_ideas(payload) == 1
     assert len(store.list_recent_ideas()) == 1
+
+
+def test_runtime_store_only_deduplicates_queued_ideas(tmp_path: Path) -> None:
+    store = RuntimeStore(tmp_path / "runtime.db")
+    payload = [
+        {
+            "title": "idea-a",
+            "summary": "summary",
+            "rationale": "why",
+            "source_url": "https://example.com/a",
+            "status": "engineering",
+        },
+        {
+            "title": "idea-a",
+            "summary": "summary",
+            "rationale": "why",
+            "source_url": "https://example.com/a",
+            "status": "queued",
+        },
+    ]
+
+    assert store.add_ideas(payload) == 2
+    ideas = store.list_recent_ideas()
+    assert len(ideas) == 2
+    assert {idea["status"] for idea in ideas} == {"engineering", "queued"}
+
+
+def test_runtime_store_purges_legacy_idea_status_data(tmp_path: Path) -> None:
+    db_path = tmp_path / "runtime.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE ideas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            rationale TEXT,
+            source_kind TEXT,
+            source_title TEXT,
+            source_url TEXT,
+            status TEXT NOT NULL,
+            priority INTEGER NOT NULL DEFAULT 50,
+            agent_notes TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE experiments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            idea_id INTEGER NOT NULL,
+            alpha_name TEXT,
+            alpha_expression TEXT,
+            implementation_notes TEXT,
+            status TEXT NOT NULL,
+            sharpe REAL,
+            fitness REAL,
+            turnover REAL,
+            drawdown REAL,
+            returns REAL,
+            wq_alpha_id TEXT,
+            submitted INTEGER NOT NULL DEFAULT 0,
+            submission_result TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO ideas (id, title, summary, rationale, status, priority, created_at, updated_at)
+        VALUES (1, 'legacy idea', 'old', 'why', 'claimed', 10, '2026-03-30T00:00:00+00:00', '2026-03-30T00:00:00+00:00')
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO ideas (id, title, summary, rationale, status, priority, created_at, updated_at)
+        VALUES (2, 'valid idea', 'new', 'why', 'queued', 10, '2026-03-30T00:00:00+00:00', '2026-03-30T00:00:00+00:00')
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO experiments (idea_id, alpha_name, status, created_at, updated_at)
+        VALUES (1, 'legacy-alpha', 'promising', '2026-03-30T00:00:00+00:00', '2026-03-30T00:00:00+00:00')
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO experiments (idea_id, alpha_name, status, created_at, updated_at)
+        VALUES (2, 'valid-alpha', 'promising', '2026-03-30T00:00:00+00:00', '2026-03-30T00:00:00+00:00')
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    store = RuntimeStore(db_path)
+
+    ideas = store.list_recent_ideas(limit=10)
+    experiments = store.list_recent_experiments(limit=10)
+    assert len(ideas) == 1
+    assert ideas[0]["title"] == "valid idea"
+    assert len(experiments) == 1
+    assert experiments[0]["alpha_name"] == "valid-alpha"
 
 
 def test_runtime_status_reports_paths(tmp_path: Path) -> None:
